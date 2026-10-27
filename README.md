@@ -10,6 +10,7 @@ và lịch sử. Làm dở trên web, mở `veng` là làm tiếp (và ngược 
 
 ```bash
 brew tap nmvuong92/veng https://github.com/nmvuong92/veng
+brew trust nmvuong92/veng     # Homebrew mới bắt xác nhận tap bên ngoài
 brew install veng
 veng login        # dán CLI_API_KEY một lần, lưu ở ~/.config/veng/config.json (chmod 600)
 veng
