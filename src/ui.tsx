@@ -149,6 +149,12 @@ function FeedbackView({ fb, sample }: { fb: Feedback; sample: string }) {
           <Text color={BRAND}>✓ </Text>
           <Text bold>{right}</Text>
         </Text>
+        {fb.preps?.map((p) => (
+          <Text key={p.phrase}>
+            <Text color={WARM}>  {p.phrase}</Text>
+            <Text color="gray"> · {p.why}</Text>
+          </Text>
+        ))}
         {alts.length ? (
           <>
             <Text color="gray">cách nói khác</Text>

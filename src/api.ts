@@ -63,6 +63,8 @@ export interface Feedback {
   styleNote: string;
   fixes: { wrong: string; right: string; why: string }[];
   natural: string[];
+  /** Giới từ trong câu đúng + vì sao — server cũ / kết quả cũ không có. */
+  preps?: { phrase: string; why: string }[];
 }
 export interface Stats {
   cycle: number;
