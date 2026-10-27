@@ -66,15 +66,24 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
 /** Xanh = đúng cả nghĩa lẫn thì, vàng = đúng nghĩa sai thì, đỏ = sai nghĩa — giống web. */
 const toneOf = (fb: Feedback) => (fb.meaningOk && fb.tenseOk ? BRAND : fb.meaningOk ? WARM : BAD);
 
-function ScoreBar({ fb }: { fb: Feedback }) {
+function ScoreDots({ fb }: { fb: Feedback }) {
   const n = Math.max(0, Math.min(10, Math.round(fb.score)));
   return (
-    <Text color={toneOf(fb)}>
-      {'█'.repeat(n)}
-      <Text color="gray">{'░'.repeat(10 - n)}</Text> {fb.score}/10
+    <Text>
+      <Text bold color={toneOf(fb)}>
+        {fb.score}/10
+      </Text>{' '}
+      <Text color={toneOf(fb)}>{'●'.repeat(n)}</Text>
+      <Text color="gray">{'○'.repeat(10 - n)}</Text>
     </Text>
   );
 }
+
+const Check = ({ ok, label }: { ok: boolean; label: string }) => (
+  <Text color={ok ? BRAND : BAD}>
+    {label} {ok ? '✓' : '✗'}
+  </Text>
+);
 
 function Header({ stats }: { stats: Stats | null }) {
   return (
@@ -93,34 +102,64 @@ function Header({ stats }: { stats: Stats | null }) {
   );
 }
 
-function FeedbackView({ fb }: { fb: Feedback }) {
+/** Khối chấm: thanh dọc màu theo kết quả, gọn một cột — điểm, nhận xét, sửa lỗi, câu đúng, cách nói khác. */
+function FeedbackView({ fb, sample }: { fb: Feedback; sample: string }) {
+  const right = fb.corrected || sample;
+  const alts = [
+    ...(norm(sample) !== norm(right) ? [sample] : []),
+    ...(fb.natural ?? []),
+  ].filter((x, i, arr) => x && norm(x) !== norm(right) && arr.findIndex((y) => norm(y) === norm(x)) === i);
   return (
-    <Box flexDirection="column" marginLeft={4} marginTop={0}>
+    <Box
+      flexDirection="column"
+      marginLeft={4}
+      paddingLeft={1}
+      borderStyle="bold"
+      borderTop={false}
+      borderRight={false}
+      borderBottom={false}
+      borderColor={toneOf(fb)}
+    >
       <Text>
-        <ScoreBar fb={fb} />
-        {'  '}
-        <Text color={fb.meaningOk ? BRAND : BAD}>{fb.meaningOk ? '✓' : '✗'} nghĩa</Text>
-        {'  '}
-        <Text color={fb.tenseOk ? BRAND : BAD}>{fb.tenseOk ? '✓' : '✗'} thì</Text>
+        <ScoreDots fb={fb} />
+        {'   '}
+        <Check ok={fb.meaningOk} label="nghĩa" />
+        {'   '}
+        <Check ok={fb.tenseOk} label="thì" />
       </Text>
-      <Text>{fb.comment}</Text>
-      {fb.tenseNote ? <Text color={BRAND}>⏱ {fb.tenseNote}</Text> : null}
-      {fb.fixes?.map((f) => (
-        <Text key={`${f.wrong}→${f.right}`}>
-          <Text color={BAD} strikethrough>
-            {f.wrong}
-          </Text>
-          <Text color="gray"> → </Text>
-          <Text color={BRAND}>{f.right}</Text>
-          {f.why ? <Text color="gray"> · {f.why}</Text> : null}
-        </Text>
-      ))}
-      {fb.corrected ? (
-        <Text>
-          <Text color="gray">✎ </Text>
-          <Text bold>{fb.corrected}</Text>
-        </Text>
+      <Text color="gray">{fb.comment}</Text>
+      {fb.tenseNote ? <Text color="gray">⏱ {fb.tenseNote}</Text> : null}
+      {fb.fixes?.length ? (
+        <Box flexDirection="column" marginTop={1}>
+          {fb.fixes.map((f) => (
+            <Text key={`${f.wrong}→${f.right}`}>
+              <Text color={BAD} strikethrough>
+                {f.wrong}
+              </Text>
+              <Text color="gray"> → </Text>
+              <Text color={BRAND}>{f.right}</Text>
+              {f.why ? <Text color="gray"> · {f.why}</Text> : null}
+            </Text>
+          ))}
+        </Box>
       ) : null}
+      <Box flexDirection="column" marginTop={1}>
+        <Text>
+          <Text color={BRAND}>✓ </Text>
+          <Text bold>{right}</Text>
+        </Text>
+        {alts.length ? (
+          <>
+            <Text color="gray">cách nói khác</Text>
+            {alts.map((x) => (
+              <Text key={x}>
+                <Text color={WARM}>≈ </Text>
+                {x}
+              </Text>
+            ))}
+          </>
+        ) : null}
+      </Box>
       {fb.styleNote ? <Text color="gray">· {fb.styleNote}</Text> : null}
     </Box>
   );
@@ -409,19 +448,22 @@ export function Practice({ cfg }: { cfg: Config }) {
                         {busy ? <Text>{answers[i]}</Text> : <AnswerInput value={answers[i] ?? ''} onChange={setAnswer} />}
                       </Text>
                       {hint ? (
-                        <Text color={WARM}>
-                          {'    💡 '}
-                          {l.hint}
-                          {l.patterns?.length ? <Text color="gray"> · {l.patterns.join(' · ')}</Text> : null}
-                        </Text>
+                        <Box marginLeft={4}>
+                          <Text color={WARM}>
+                            💡 {l.hint}
+                            {l.patterns?.length ? <Text color="gray"> · {l.patterns.join(' · ')}</Text> : null}
+                          </Text>
+                        </Box>
                       ) : null}
-                      {reveal || fb ? (
-                        <Text>
-                          <Text color="gray">{'    ◆ mẫu: '}</Text>
-                          <Text color={BRAND}>{l.answer}</Text>
-                        </Text>
+                      {reveal && !fb ? (
+                        <Box marginLeft={4}>
+                          <Text>
+                            <Text color="gray">◆ mẫu </Text>
+                            <Text color={BRAND}>{l.answer}</Text>
+                          </Text>
+                        </Box>
                       ) : null}
-                      {fb ? <FeedbackView fb={fb} /> : null}
+                      {fb ? <FeedbackView fb={fb} sample={l.answer} /> : null}
                     </>
                   ) : fb ? (
                     <GradedLines answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
