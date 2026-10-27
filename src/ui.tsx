@@ -126,6 +126,29 @@ function FeedbackView({ fb }: { fb: Feedback }) {
   );
 }
 
+const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9']+/g, ' ').trim();
+
+/** Câu đã chấm (khi không đang làm): dòng 1 câu mình viết + ✓/✗, dòng 2 câu đúng — đúng hẳn thì bỏ. */
+function GradedLines({ answer, fb, sample }: { answer: string; fb: Feedback; sample: string }) {
+  const ok = fb.meaningOk && fb.tenseOk;
+  const right = fb.corrected || sample;
+  const perfect = ok && norm(right) === norm(answer);
+  return (
+    <>
+      <Text>
+        <Text color={toneOf(fb)}>{`    ${ok ? '✓' : '✗'} `}</Text>
+        <Text color="gray">{answer}</Text>
+      </Text>
+      {perfect ? null : (
+        <Text>
+          <Text color={BRAND}>{'    → '}</Text>
+          <Text color={BRAND}>{right}</Text>
+        </Text>
+      )}
+    </>
+  );
+}
+
 function Keys({ items }: { items: [string, string][] }) {
   return (
     <Box marginTop={1} flexWrap="wrap">
@@ -400,6 +423,8 @@ export function Practice({ cfg }: { cfg: Config }) {
                       ) : null}
                       {fb ? <FeedbackView fb={fb} /> : null}
                     </>
+                  ) : fb ? (
+                    <GradedLines answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
                   ) : answers[i] ? (
                     <Text color="gray">{`    › ${answers[i]}`}</Text>
                   ) : null}
