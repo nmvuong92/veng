@@ -11,6 +11,7 @@ import {
   linesOf,
   type Stats,
   type Summary,
+  type Vocab,
   saveConfig,
 } from './api.js';
 
@@ -188,6 +189,35 @@ function GradedLines({ answer, fb, sample }: { answer: string; fb: Feedback; sam
   );
 }
 
+function VocabHint({ vocab, index }: { vocab: Vocab | 'loading' | { error: string } | null; index: number }) {
+  if (vocab === 'loading' || vocab === null)
+    return (
+      <Text color="gray">
+        <Spinner type="dots" /> đang lấy từ vựng…
+      </Text>
+    );
+  if ('error' in vocab) return <Text color={BAD}>✗ {vocab.error}</Text>;
+  const words = vocab.lines.find((l) => l.index === index)?.words ?? [];
+  if (!words.length) return <Text color="gray">📖 câu này không có từ nào đáng chú ý</Text>;
+  const w = Math.max(...words.map((x) => x.vi.length));
+  return (
+    <Box flexDirection="column">
+      <Text color="gray">📖 từ vựng</Text>
+      {words.map((x) => (
+        <Text key={`${x.vi}-${x.en}`}>
+          {'   '}
+          {x.vi.padEnd(w)}
+          <Text color="gray"> → </Text>
+          <Text color={BRAND} bold>
+            {x.en}
+          </Text>
+          <Text color="gray"> {x.pos}</Text>
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
 function Keys({ items }: { items: [string, string][] }) {
   return (
     <Box marginTop={1} flexWrap="wrap">
@@ -218,7 +248,9 @@ export function Practice({ cfg }: { cfg: Config }) {
   const [answers, setAnswers] = useState<string[]>([]);
   const [feedbacks, setFeedbacks] = useState<(Feedback | null)[]>([]);
   const [cur, setCur] = useState(0);
-  const [hint, setHint] = useState(false);
+  /** Gợi ý 2 tầng: 0 tắt · 1 cấu trúc · 2 thêm từ vựng chính. */
+  const [hint, setHint] = useState(0);
+  const [vocab, setVocab] = useState<Vocab | 'loading' | { error: string } | null>(null);
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState<string | null>('Đang mở bài…');
   const [error, setError] = useState('');
@@ -248,7 +280,8 @@ export function Practice({ cfg }: { cfg: Config }) {
       setGradedAs(ans.map((x, i) => (fbs[i] ? x : '')));
       setSummary(null);
       summarized.current = '';
-      setHint(false);
+      setHint(0);
+      setVocab(null);
       setReveal(false);
       const first = fbs.findIndex((x) => !x);
       setCur(first < 0 ? 0 : first);
@@ -364,7 +397,7 @@ export function Practice({ cfg }: { cfg: Config }) {
 
   const move = (d: number) => {
     setCur((c) => Math.max(0, Math.min(steps.length - 1, c + d)));
-    setHint(false);
+    setHint(0);
     setReveal(false);
   };
 
@@ -386,7 +419,19 @@ export function Practice({ cfg }: { cfg: Config }) {
     if (!drill) return;
     if (key.upArrow) return move(-1);
     if (key.downArrow) return move(1);
-    if (key.tab) return setHint((h) => !h);
+    if (key.tab) {
+      const next = (hint + 1) % 3;
+      setHint(next);
+      // Tầng 2 lần đầu trong đoạn → xin từ vựng cho cả đoạn một lần (server cache vĩnh viễn).
+      if (next === 2 && (vocab === null || (typeof vocab === 'object' && 'error' in vocab))) {
+        setVocab('loading');
+        api
+          .vocab(steps.map((x) => ({ vi: x.vi, answer: x.answer })))
+          .then(setVocab)
+          .catch((e) => setVocab({ error: (e as Error).message }));
+      }
+      return;
+    }
     if (key.ctrl && input === 'r') return setReveal((r) => !r);
     if (key.return) {
       if (allGraded && !answerChanged(cur)) return void nextDrill();
@@ -395,7 +440,7 @@ export function Practice({ cfg }: { cfg: Config }) {
         const any = n < 0 ? feedbacks.findIndex((f) => !f) : n;
         if (any >= 0) {
           setCur(any);
-          setHint(false);
+          setHint(0);
           setReveal(false);
         }
         return;
@@ -448,11 +493,12 @@ export function Practice({ cfg }: { cfg: Config }) {
                         {busy ? <Text>{answers[i]}</Text> : <AnswerInput value={answers[i] ?? ''} onChange={setAnswer} />}
                       </Text>
                       {hint ? (
-                        <Box marginLeft={4}>
+                        <Box flexDirection="column" marginLeft={4}>
                           <Text color={WARM}>
                             💡 {l.hint}
                             {l.patterns?.length ? <Text color="gray"> · {l.patterns.join(' · ')}</Text> : null}
                           </Text>
+                          {hint === 2 ? <VocabHint vocab={vocab} index={i} /> : null}
                         </Box>
                       ) : null}
                       {reveal && !fb ? (
@@ -511,7 +557,7 @@ export function Practice({ cfg }: { cfg: Config }) {
         items={[
           ['⏎', 'chấm / câu tiếp'],
           ['↑↓', 'đổi câu'],
-          ['tab', 'gợi ý'],
+          ['tab', 'gợi ý ×2'],
           ['^R', 'xem mẫu'],
           ['^N', 'đề khác'],
           ['esc', 'thoát'],

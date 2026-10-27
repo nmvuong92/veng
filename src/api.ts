@@ -86,6 +86,15 @@ export interface Summary {
   overall: string;
 }
 
+export interface VocabWord {
+  vi: string;
+  en: string;
+  pos: string;
+}
+export interface Vocab {
+  lines: { index: number; words: VocabWord[] }[];
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -141,6 +150,7 @@ export function client(cfg: Config) {
       drillKey: string;
       lines: { vi: string; answer: string; corrected: string; meaningOk: boolean; tenseOk: boolean }[];
     }) => call<Summary>(`${k}/summary`, body),
+    vocab: (lines: { vi: string; answer: string }[]) => call<Vocab>(`${k}/vocab`, { lines }),
     reset: () => call<{ cycle: number }>(`${k}/reset`, {}),
   };
 }
