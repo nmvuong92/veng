@@ -407,7 +407,13 @@ export function Practice({ cfg }: { cfg: Config }) {
   }
 
   useInput((input, key) => {
-    if (key.escape || (key.ctrl && (input === 'c' || input === 'd'))) return void quit();
+    if (key.ctrl && (input === 'c' || input === 'd')) return void quit();
+    // Esc chỉ đóng gợi ý / câu mẫu — không thoát, bấm lỡ không mất gì.
+    if (key.escape) {
+      setHint(0);
+      setReveal(false);
+      return;
+    }
     if (busy) return;
     if (key.ctrl && input === 'n') return void nextDrill();
     if (key.ctrl && input === 'x' && wrapped) {
@@ -560,7 +566,8 @@ export function Practice({ cfg }: { cfg: Config }) {
           ['tab', 'gợi ý ×2'],
           ['^R', 'xem mẫu'],
           ['^N', 'đề khác'],
-          ['esc', 'thoát'],
+          ['esc', 'đóng gợi ý'],
+          ['^C', 'lưu & thoát'],
         ]}
       />
     </Box>

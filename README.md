@@ -34,10 +34,11 @@ Biến môi trường (ghi đè file cấu hình): `VENG_API_KEY`, `VENG_API_URL
 |---|---|
 | `⏎` | chấm câu · đã chấm thì sang câu chưa làm · xong đoạn thì sang đoạn mới |
 | `↑` `↓` | đổi câu |
-| `Tab` | gợi ý mốc thời gian |
+| `Tab` | gợi ý: lần 1 cấu trúc · lần 2 thêm từ vựng · lần 3 tắt |
 | `Ctrl+R` | xem câu mẫu |
 | `Ctrl+N` | đề khác |
-| `Esc` | lưu bài dở rồi thoát |
+| `Esc` | đóng gợi ý / câu mẫu |
+| `Ctrl+C` | lưu bài dở rồi thoát |
 | `Ctrl+A/E/U/W` | sửa dòng như shell |
 
 ## Phát triển
