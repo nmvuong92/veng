@@ -1,0 +1,44 @@
+# Đẩy tag vX.Y.Z → build dist/veng.mjs → tạo Release → cập nhật Formula/veng.rb (url + sha256).
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Build + đóng gói
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          npm run build
+          node dist/veng.mjs --version | grep -qx "$VERSION"
+          tar -czf "veng-$VERSION.tgz" -C dist veng.mjs
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "SHA=$(sha256sum "veng-$VERSION.tgz" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+      - name: Tạo Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "veng-$VERSION.tgz" --title "veng $VERSION" --generate-notes
+      - name: Cập nhật Formula
+        run: |
+          sed -i -E \
+            -e "s#^  url \".*\"#  url \"https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/veng-${VERSION}.tgz\"#" \
+            -e "s#^  sha256 \".*\"#  sha256 \"${SHA}\"#" \
+            Formula/veng.rb
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add Formula/veng.rb package.json package-lock.json
+          git commit -m "veng ${VERSION}"
+          git push origin main
