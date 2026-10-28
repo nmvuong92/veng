@@ -303,7 +303,8 @@ export function App({ cfg }: { cfg: Config }) {
         setKind(KINDS[cur]);
       }
       // Phím tắt chỉ dời con trỏ — vào bài vẫn phải Enter.
-      const i = key.ctrl || key.meta ? -1 : HOTKEYS.indexOf(input.toLowerCase());
+      // input rỗng (phím mũi tên…) thì indexOf('') = 0 → phải loại, không là nhảy về mục 1.
+      const i = input.length !== 1 || key.ctrl || key.meta ? -1 : HOTKEYS.indexOf(input.toLowerCase());
       if (i >= 0 && i < KINDS.length) setCur(i);
     },
     { isActive: !kind },
