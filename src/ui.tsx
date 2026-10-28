@@ -1395,18 +1395,15 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
               const active = i === cur;
               const mark = fb ? (fb.meaningOk && fb.tenseOk ? '✓' : '✗') : active ? '▸' : '·';
               return (
-                // Câu đang làm: khung bo tròn sáng; câu khác: chỉ vạch mờ bên trái, chữ faint.
+                // Câu đang làm: khung bo tròn sáng; câu khác: không viền, chữ faint, lùi 2 cột cho thẳng hàng.
                 // key đổi theo active: Ink không trả bề dày viền về 0 khi borderBottom true → false
                 // (còn giữ chỗ 1 dòng trống), nên dựng lại Box thay vì đổi prop.
                 <Box
                   key={`${i}-${l.vi}-${active ? 'on' : 'off'}`}
                   flexDirection="column"
-                  borderStyle={active ? 'round' : 'single'}
-                  borderColor={active ? frame.color : FAINT}
-                  borderTop={active}
-                  borderRight={active}
-                  borderBottom={active}
-                  paddingLeft={1}
+                  borderStyle={active ? 'round' : undefined}
+                  borderColor={frame.color}
+                  paddingLeft={active ? 1 : 2}
                   paddingRight={active ? 1 : 0}
                 >
                   <Hang
