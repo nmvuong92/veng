@@ -250,11 +250,47 @@ function AnswerInput({
   return useLineEditor(value, onChange, true);
 }
 
+const LABEL_W = Math.max(...KINDS.map((k) => k.label.length)) + 2;
+
+/** Một dòng tiến độ ở menu: thanh đoạn đã làm / kho đề · số đoạn · điểm TB. */
+function KindProgress({ st }: { st?: Stats }) {
+  if (!st) return <Text color="gray">…</Text>;
+  const W = 12;
+  const n = st.doneDrills ? Math.max(1, Math.round((st.doneDrills / Math.max(1, st.totalDrills)) * W)) : 0;
+  return (
+    <Text>
+      <Text color={BRAND}>{'━'.repeat(n)}</Text>
+      <Text color="gray">{'─'.repeat(W - n)}</Text>
+      <Text color="gray">{` ${`${st.doneDrills}/${st.totalDrills}`.padStart(7)}`}</Text>
+      {st.lines ? (
+        <Text>
+          {'  ⌀ '}
+          <Text color={st.avg >= 8 ? BRAND : st.avg >= 6 ? WARM : BAD}>{st.avg}</Text>
+          <Text color="gray"> · {st.lines} câu</Text>
+        </Text>
+      ) : (
+        <Text color="gray">  chưa luyện</Text>
+      )}
+    </Text>
+  );
+}
+
 /** Mở veng: chọn loại luyện (con trỏ sẵn ở loại lần trước) → vào luyện; Esc trong bài → quay lại đây. */
 export function App({ cfg }: { cfg: Config }) {
   const { exit } = useApp();
   const [kind, setKind] = useState<Kind | null>(null);
   const [cur, setCur] = useState(() => Math.max(0, KINDS.findIndex((k) => k.id === cfg.lastKind)));
+  /** Tiến độ từng loại — tải lại mỗi lần về menu. */
+  const [progress, setProgress] = useState<Record<string, Stats>>({});
+  useEffect(() => {
+    if (kind) return;
+    for (const k of KINDS) {
+      client(cfg, k.id)
+        .stats()
+        .then((st) => setProgress((p) => ({ ...p, [k.id]: st })))
+        .catch(() => {});
+    }
+  }, [cfg, kind]);
   useInput(
     (input, key) => {
       if (key.ctrl && (input === 'c' || input === 'd')) return exit();
@@ -274,9 +310,12 @@ export function App({ cfg }: { cfg: Config }) {
       <Text color="gray">Luyện gì hôm nay?</Text>
       <Box flexDirection="column" marginY={1}>
         {KINDS.map((k, i) => (
-          <Text key={k.id} color={i === cur ? WARM : undefined} bold={i === cur}>
-            {i === cur ? ' ▸ ' : '   '}
-            {k.label}
+          <Text key={k.id}>
+            <Text color={i === cur ? WARM : undefined} bold={i === cur}>
+              {i === cur ? ' ▸ ' : '   '}
+              {k.label.padEnd(LABEL_W)}
+            </Text>
+            <KindProgress st={progress[k.id]} />
           </Text>
         ))}
       </Box>
