@@ -22,6 +22,8 @@ import {
 const BRAND = '#3fa796';
 const WARM = '#d6a23a';
 const BAD = '#e0645c';
+/** Chữ phụ. Không dùng MUTED của Ink (ANSI bright black) — trên nền tối gần như chìm. */
+const MUTED = '#9aa3ad';
 
 /** Ô nhập một dòng, phím kiểu readline. Tự viết vì ink-text-input nuốt Ctrl+chữ thành ký tự. */
 function useLineEditor(value: string, onChange: (v: string) => void, active: boolean, mask = false) {
@@ -79,7 +81,7 @@ function ScoreDots({ fb }: { fb: Feedback }) {
         {fb.score}/10
       </Text>{' '}
       <Text color={toneOf(fb)}>{'●'.repeat(n)}</Text>
-      <Text color="gray">{'○'.repeat(10 - n)}</Text>
+      <Text color={MUTED}>{'○'.repeat(10 - n)}</Text>
     </Text>
   );
 }
@@ -95,10 +97,10 @@ function Header({ stats, kind }: { stats: Stats | null; kind?: Kind }) {
     <Box justifyContent="space-between" marginBottom={1}>
       <Text>
         <Gradient colors={[BRAND, WARM]}>▍veng</Gradient>
-        <Text color="gray"> · {kind ? kind.label : 'luyện dịch'} · Việt → Anh, AI chấm</Text>
+        <Text color={MUTED}> · {kind ? kind.label : 'luyện dịch'} · Việt → Anh, AI chấm</Text>
       </Text>
       {stats ? (
-        <Text color="gray">
+        <Text color={MUTED}>
           {stats.doneDrills}/{stats.totalDrills} đoạn · ⌀ <Text color={WARM}>{stats.avg}</Text> · đúng{' '}
           {kind?.axis} {stats.tenseOk}/{stats.lines}
         </Text>
@@ -132,8 +134,8 @@ function FeedbackView({ fb, sample, axis }: { fb: Feedback; sample: string; axis
         {'   '}
         <Check ok={fb.tenseOk} label={axis} />
       </Text>
-      <Text color="gray">{fb.comment}</Text>
-      {fb.tenseNote ? <Text color="gray">⏱ {fb.tenseNote}</Text> : null}
+      <Text>{fb.comment}</Text>
+      {fb.tenseNote ? <Text color={BRAND}>⏱ {fb.tenseNote}</Text> : null}
       {fb.fixes?.length ? (
         <Box flexDirection="column" marginTop={1}>
           {fb.fixes.map((f) => (
@@ -141,9 +143,9 @@ function FeedbackView({ fb, sample, axis }: { fb: Feedback; sample: string; axis
               <Text color={BAD} strikethrough>
                 {f.wrong}
               </Text>
-              <Text color="gray"> → </Text>
+              <Text color={MUTED}> → </Text>
               <Text color={BRAND}>{f.right}</Text>
-              {f.why ? <Text color="gray"> · {f.why}</Text> : null}
+              {f.why ? <Text color={MUTED}> · {f.why}</Text> : null}
             </Text>
           ))}
         </Box>
@@ -156,12 +158,12 @@ function FeedbackView({ fb, sample, axis }: { fb: Feedback; sample: string; axis
         {fb.preps?.map((p) => (
           <Text key={p.phrase}>
             <Text color={WARM}>  {p.phrase}</Text>
-            <Text color="gray"> · {p.why}</Text>
+            <Text color={MUTED}> · {p.why}</Text>
           </Text>
         ))}
         {alts.length ? (
           <>
-            <Text color="gray">cách nói khác</Text>
+            <Text color={MUTED}>cách nói khác</Text>
             {alts.map((x) => (
               <Text key={x}>
                 <Text color={WARM}>≈ </Text>
@@ -171,7 +173,7 @@ function FeedbackView({ fb, sample, axis }: { fb: Feedback; sample: string; axis
           </>
         ) : null}
       </Box>
-      {fb.styleNote ? <Text color="gray">· {fb.styleNote}</Text> : null}
+      {fb.styleNote ? <Text color={MUTED}>· {fb.styleNote}</Text> : null}
     </Box>
   );
 }
@@ -187,7 +189,7 @@ function GradedLines({ answer, fb, sample }: { answer: string; fb: Feedback; sam
     <>
       <Text>
         <Text color={toneOf(fb)}>{`    ${ok ? '✓' : '✗'} `}</Text>
-        <Text color="gray">{answer}</Text>
+        <Text>{answer}</Text>
       </Text>
       {perfect ? null : (
         <Text>
@@ -202,26 +204,26 @@ function GradedLines({ answer, fb, sample }: { answer: string; fb: Feedback; sam
 function VocabHint({ vocab, index }: { vocab: Vocab | 'loading' | { error: string } | null; index: number }) {
   if (vocab === 'loading' || vocab === null)
     return (
-      <Text color="gray">
+      <Text color={MUTED}>
         <Spinner type="dots" /> đang lấy từ vựng…
       </Text>
     );
   if ('error' in vocab) return <Text color={BAD}>✗ {vocab.error}</Text>;
   const words = vocab.lines.find((l) => l.index === index)?.words ?? [];
-  if (!words.length) return <Text color="gray">📖 câu này không có từ nào đáng chú ý</Text>;
+  if (!words.length) return <Text color={MUTED}>📖 câu này không có từ nào đáng chú ý</Text>;
   const w = Math.max(...words.map((x) => x.vi.length));
   return (
     <Box flexDirection="column">
-      <Text color="gray">📖 từ vựng</Text>
+      <Text color={MUTED}>📖 từ vựng</Text>
       {words.map((x) => (
         <Text key={`${x.vi}-${x.en}`}>
           {'   '}
           {x.vi.padEnd(w)}
-          <Text color="gray"> → </Text>
+          <Text color={MUTED}> → </Text>
           <Text color={BRAND} bold>
             {x.en}
           </Text>
-          <Text color="gray"> {x.pos}</Text>
+          <Text color={MUTED}> {x.pos}</Text>
         </Text>
       ))}
     </Box>
@@ -234,7 +236,7 @@ function Keys({ items }: { items: [string, string][] }) {
       {items.map(([k, label]) => (
         <Text key={k}>
           <Text color={WARM}>{k}</Text>
-          <Text color="gray"> {label}   </Text>
+          <Text color={MUTED}> {label}   </Text>
         </Text>
       ))}
     </Box>
@@ -318,17 +320,17 @@ function Splash({ lines, onDone }: { lines: number | null; onDone: () => void })
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Gradient colors={colors}>{logo}</Gradient>
       <Box marginTop={1} flexDirection="column">
-        <Text color="gray">{typed('▍ phản xạ Việt → Anh · ngay trong terminal', 650)}</Text>
+        <Text color={MUTED}>{typed('▍ phản xạ Việt → Anh · ngay trong terminal', 650)}</Text>
         <Text bold color={WARM}>
           {typed(`“${quote}”`, 900)}
         </Text>
         {lines ? (
-          <Text color="gray">{typed(`  ${lines} câu đã luyện — tiếp nào.`, 1300)}</Text>
+          <Text color={MUTED}>{typed(`  ${lines} câu đã luyện — tiếp nào.`, 1300)}</Text>
         ) : null}
       </Box>
       <Box marginTop={1}>
         {ready ? (
-          <Text color={Math.floor(t / 600) % 2 ? 'gray' : WARM}>⏎ Enter để bắt đầu</Text>
+          <Text color={Math.floor(t / 600) % 2 ? MUTED : WARM}>⏎ Enter để bắt đầu</Text>
         ) : (
           <Text> </Text>
         )}
@@ -429,7 +431,7 @@ function Verdict({ fb, streak, onEnd }: { fb: Feedback; streak: number; onEnd: (
       <Text>
         {' '.repeat(Math.max(0, mid - 10))}
         <Text color={color}>{'●'.repeat(score)}</Text>
-        <Text color="gray">{'○'.repeat(10 - score)}</Text>
+        <Text color={MUTED}>{'○'.repeat(10 - score)}</Text>
         {tone === 'good' && streak >= 2 ? <Text color={WARM}>{`  🔥 ${streak} câu liên tiếp`}</Text> : null}
       </Text>
       <Text color={WARM}>{sparkRow(2)}</Text>
@@ -443,22 +445,22 @@ const LABEL_W = Math.max(...KINDS.map((k) => k.label.length)) + 2;
 
 /** Một dòng tiến độ ở menu: thanh đoạn đã làm / kho đề · số đoạn · điểm TB. */
 function KindProgress({ st }: { st?: Stats }) {
-  if (!st) return <Text color="gray">…</Text>;
+  if (!st) return <Text color={MUTED}>…</Text>;
   const W = 12;
   const n = st.doneDrills ? Math.max(1, Math.round((st.doneDrills / Math.max(1, st.totalDrills)) * W)) : 0;
   return (
     <Text>
       <Text color={BRAND}>{'━'.repeat(n)}</Text>
-      <Text color="gray">{'─'.repeat(W - n)}</Text>
-      <Text color="gray">{` ${`${st.doneDrills}/${st.totalDrills}`.padStart(7)}`}</Text>
+      <Text color={MUTED}>{'─'.repeat(W - n)}</Text>
+      <Text color={MUTED}>{` ${`${st.doneDrills}/${st.totalDrills}`.padStart(7)}`}</Text>
       {st.lines ? (
         <Text>
           {'  ⌀ '}
           <Text color={st.avg >= 8 ? BRAND : st.avg >= 6 ? WARM : BAD}>{st.avg}</Text>
-          <Text color="gray"> · {st.lines} câu</Text>
+          <Text color={MUTED}> · {st.lines} câu</Text>
         </Text>
       ) : (
-        <Text color="gray">  chưa luyện</Text>
+        <Text color={MUTED}>  chưa luyện</Text>
       )}
     </Text>
   );
@@ -506,14 +508,14 @@ export function App({ cfg }: { cfg: Config }) {
   return (
     <Box flexDirection="column" paddingX={1}>
       <Header stats={null} />
-      <Text color="gray">Luyện gì hôm nay?</Text>
+      <Text color={MUTED}>Luyện gì hôm nay?</Text>
       <Box flexDirection="column" marginY={1}>
         {KINDS.map((k, i) => (
           <Text key={k.id}>
             <Text color={i === cur ? WARM : undefined} bold={i === cur}>
               {i === cur ? ' ▸ ' : '   '}
             </Text>
-            <Text color="gray">{HOTKEYS[i]} </Text>
+            <Text color={MUTED}>{HOTKEYS[i]} </Text>
             <Text color={i === cur ? WARM : undefined} bold={i === cur}>
               {k.label.padEnd(LABEL_W)}
             </Text>
@@ -635,12 +637,12 @@ function HistoryView({
       <Text>
         <Text bold>Lịch sử </Text>
         {HISTORY_FILTERS.map((f) => (
-          <Text key={f.id} color={f.id === filter ? WARM : 'gray'} bold={f.id === filter}>
+          <Text key={f.id} color={f.id === filter ? WARM : MUTED} bold={f.id === filter}>
             {f.id === filter ? ` [${f.label}] ` : `  ${f.label}  `}
           </Text>
         ))}
         {data ? (
-          <Text color="gray">
+          <Text color={MUTED}>
             {' '}
             · {data.total} bài · trang {page}/{pages}
           </Text>
@@ -653,7 +655,7 @@ function HistoryView({
         </Text>
       ) : null}
       {data && !items.length ? (
-        <Text color="gray">
+        <Text color={MUTED}>
           {filter === 'weak' ? 'Không còn bài nào cần cải thiện 🎉 — Tab để xem tất cả.' : 'Chưa làm bài nào.'}
         </Text>
       ) : null}
@@ -667,11 +669,11 @@ function HistoryView({
           return (
             <Box key={p.drillKey} flexDirection="column" marginBottom={active ? 1 : 0}>
               <Text>
-                <Text color={active ? WARM : 'gray'}>{active ? '▸ ' : '  '}</Text>
+                <Text color={active ? WARM : MUTED}>{active ? '▸ ' : '  '}</Text>
                 <Text bold color={scoreColor(avg)}>
                   {String(avg).padStart(4)}/10
                 </Text>
-                <Text color="gray">
+                <Text color={MUTED}>
                   {'  '}đúng {good}/{p.lines.length}
                   {p.lines.length < total ? ` · làm ${p.lines.length}/${total}` : ''} · {when(p.lastAt)}
                   {'  '}
@@ -691,8 +693,8 @@ function HistoryView({
                   borderBottom={false}
                   borderColor={scoreColor(avg)}
                 >
-                  {p.drill.context ? <Text color="gray">🗣 {p.drill.context}</Text> : null}
-                  <Text color="gray">bạn viết</Text>
+                  {p.drill.context ? <Text color={MUTED}>🗣 {p.drill.context}</Text> : null}
+                  <Text color={MUTED}>bạn viết</Text>
                   <Text>
                     {p.lines.map((l) => (
                       <Text key={l.id}>
@@ -708,7 +710,7 @@ function HistoryView({
                       <Text color={WARM}>cần chú ý</Text>
                       {p.summary.overall ? <Text>{p.summary.overall}</Text> : null}
                       {p.summary.focus.map((f) => (
-                        <Text key={f} color="gray">
+                        <Text key={f} color={MUTED}>
                           • {f}
                         </Text>
                       ))}
@@ -726,25 +728,25 @@ function HistoryView({
                             <Text color={scoreColor(l.score)}>
                               {l.meaningOk && l.tenseOk ? '✓' : '✗'} {l.score}/10{' '}
                             </Text>
-                            <Text color="gray">
+                            <Text color={MUTED}>
                               {String(l.lineIndex + 1).padStart(2, '0')} {l.vi}
                             </Text>
                           </Text>
                           <Text>
                             {'   '}› {l.answer}
-                            <Text color="gray">
+                            <Text color={MUTED}>
                               {'   '}nghĩa {l.meaningOk ? '✓' : '✗'} · {axis} {l.tenseOk ? '✓' : '✗'}
                             </Text>
                           </Text>
                           {l.corrected && norm(l.corrected) !== norm(l.answer) ? (
                             <Text color={BRAND}>{`   → ${l.corrected}`}</Text>
                           ) : null}
-                          {l.tenseNote ? <Text color="gray">{`   ⏱ ${l.tenseNote}`}</Text> : null}
+                          {l.tenseNote ? <Text color={MUTED}>{`   ⏱ ${l.tenseNote}`}</Text> : null}
                         </Box>
                       ))}
                     </Box>
                   ) : (
-                    <Text color="gray">⏎ xem từng câu ({p.lines.length})</Text>
+                    <Text color={MUTED}>⏎ xem từng câu ({p.lines.length})</Text>
                   )}
                 </Box>
               ) : null}
@@ -1026,8 +1028,8 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
       <Header stats={stats} kind={kind} />
       {drill ? (
         <>
-          {drill.context ? <Text color="gray">🗣 {drill.context}</Text> : null}
-          <Text color="gray">
+          {drill.context ? <Text color={MUTED}>🗣 {drill.context}</Text> : null}
+          <Text color={MUTED}>
             Đoạn {steps.length} câu · đã chấm {done}/{steps.length} · đúng {right}
           </Text>
           <Box flexDirection="column" marginTop={1}>
@@ -1038,8 +1040,8 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
               return (
                 <Box key={`${i}-${l.vi}`} flexDirection="column" marginBottom={active ? 1 : 0}>
                   <Text>
-                    <Text color={fb ? toneOf(fb) : active ? WARM : 'gray'}>{mark} </Text>
-                    <Text color="gray">{String(i + 1).padStart(2, '0')} </Text>
+                    <Text color={fb ? toneOf(fb) : active ? WARM : MUTED}>{mark} </Text>
+                    <Text color={MUTED}>{String(i + 1).padStart(2, '0')} </Text>
                     <Text bold={active} dimColor={!active && !fb}>
                       {l.vi}
                     </Text>
@@ -1055,7 +1057,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                         <Box flexDirection="column" marginLeft={4}>
                           <Text color={WARM}>
                             💡 {l.hint}
-                            {l.patterns?.length ? <Text color="gray"> · {l.patterns.join(' · ')}</Text> : null}
+                            {l.patterns?.length ? <Text color={MUTED}> · {l.patterns.join(' · ')}</Text> : null}
                           </Text>
                           {hint === 2 ? <VocabHint vocab={vocab} index={i} /> : null}
                         </Box>
@@ -1063,7 +1065,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       {reveal && !fb ? (
                         <Box marginLeft={4}>
                           <Text>
-                            <Text color="gray">◆ mẫu </Text>
+                            <Text color={MUTED}>◆ mẫu </Text>
                             <Text color={BRAND}>{l.answer}</Text>
                           </Text>
                         </Box>
@@ -1077,17 +1079,17 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       {l.reply && (fb || reveal) ? (
                         <Box flexDirection="column" marginLeft={4} marginTop={1}>
                           <Text>
-                            <Text color="gray">↩ người kia đáp </Text>
+                            <Text color={MUTED}>↩ người kia đáp </Text>
                             {l.reply}
                           </Text>
-                          {l.replyVi ? <Text color="gray">{`                ${l.replyVi}`}</Text> : null}
+                          {l.replyVi ? <Text color={MUTED}>{`                ${l.replyVi}`}</Text> : null}
                         </Box>
                       ) : null}
                     </>
                   ) : fb ? (
                     <GradedLines answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
                   ) : answers[i] ? (
-                    <Text color="gray">{`    › ${answers[i]}`}</Text>
+                    <Text color={MUTED}>{`    › ${answers[i]}`}</Text>
                   ) : null}
                 </Box>
               );
@@ -1108,11 +1110,11 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                   ))}
                 </>
               ) : steps.length > 1 ? (
-                <Text color="gray">
+                <Text color={MUTED}>
                   <Spinner type="dots" /> AI đang tổng kết đoạn…
                 </Text>
               ) : null}
-              <Text color="gray">⏎ sang đoạn mới</Text>
+              <Text color={MUTED}>⏎ sang đoạn mới</Text>
             </Box>
           ) : null}
         </>
@@ -1174,7 +1176,7 @@ export function Login({ apiUrl }: { apiUrl: string }) {
       ) : (
         <>
           <Text>
-            Dán <Text bold>CLI_API_KEY</Text> <Text color="gray">({apiUrl})</Text>
+            Dán <Text bold>CLI_API_KEY</Text> <Text color={MUTED}>({apiUrl})</Text>
           </Text>
           <Text>
             <Text color={WARM}>› </Text>
