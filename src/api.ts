@@ -31,6 +31,8 @@ export interface Config {
   apiKey: string;
   /** Loại luyện mở lần trước — menu đặt con trỏ sẵn ở đó. */
   lastKind?: string;
+  /** Màu khung câu đang làm (^T đổi). */
+  frame?: string;
 }
 
 export function loadConfig(): Config | null {
@@ -44,16 +46,18 @@ export function loadConfig(): Config | null {
     apiKey,
     apiUrl: process.env.VENG_API_URL || file.apiUrl || DEFAULT_URL,
     lastKind: file.lastKind,
+    frame: file.frame,
   };
 }
 
-/** Chỉ ghi lastKind vào file, không đụng key (key có thể đến từ biến môi trường). */
-export function saveLastKind(kind: string) {
+/** Ghi tuỳ chọn (loại lần trước, màu khung) vào file, không đụng key (key có thể đến từ biến môi trường). */
+export function savePrefs(prefs: Pick<Config, 'lastKind' | 'frame'>) {
   try {
     const file = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
-    if (file.lastKind !== kind) saveConfig({ ...file, lastKind: kind });
+    saveConfig({ ...file, ...prefs });
   } catch {}
 }
+export const saveLastKind = (lastKind: string) => savePrefs({ lastKind });
 
 export function saveConfig(cfg: Config) {
   mkdirSync(DIR, { recursive: true, mode: 0o700 });

@@ -17,6 +17,7 @@ import {
   type Vocab,
   saveConfig,
   saveLastKind,
+  savePrefs,
 } from './api.js';
 
 const BRAND = '#3fa796';
@@ -24,6 +25,15 @@ const WARM = '#d6a23a';
 const BAD = '#e0645c';
 /** Chữ phụ. Không dùng MUTED của Ink (ANSI bright black) — trên nền tối gần như chìm. */
 const MUTED = '#9aa3ad';
+/** Màu khung câu đang làm — ^T xoay vòng, nhớ trong config. */
+const FRAMES = [
+  { name: 'vàng', color: '#d6a23a' },
+  { name: 'ngọc', color: '#3fa796' },
+  { name: 'tím', color: '#a78bfa' },
+  { name: 'xanh', color: '#60a5fa' },
+  { name: 'hồng', color: '#f472b6' },
+  { name: 'bạc', color: '#cbd5e1' },
+];
 /** Vạch mờ bên trái của các câu không đang làm. */
 const FAINT = '#4a5260';
 
@@ -177,7 +187,7 @@ function FeedbackView({
       flexDirection="column"
       marginLeft={3}
       paddingLeft={1}
-      borderStyle="bold"
+      borderStyle="single"
       borderTop={false}
       borderRight={false}
       borderBottom={false}
@@ -906,6 +916,8 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const [vocab, setVocab] = useState<Vocab | 'loading' | { error: string } | null>(null);
   const [reveal, setReveal] = useState(false);
   const [view, setView] = useState<'drill' | 'history'>('drill');
+  const [frameIdx, setFrameIdx] = useState(() => Math.max(0, FRAMES.findIndex((f) => f.name === cfg.frame)));
+  const frame = FRAMES[frameIdx] ?? FRAMES[0]!;
   /** Câu vừa chấm xong → chạy hiệu ứng đúng/sai; key đổi mỗi lần chấm để chạy lại từ đầu. */
   const [burst, setBurst] = useState<{ i: number; key: number } | null>(null);
   const streak = useRef(0);
@@ -1108,6 +1120,12 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     if (key.ctrl && (input === 'c' || input === 'd')) return void quit();
     if (view !== 'drill') return;
     if (key.ctrl && input === 'l') return setView('history');
+    if (key.ctrl && input === 't') {
+      const next = (frameIdx + 1) % FRAMES.length;
+      setFrameIdx(next);
+      savePrefs({ frame: FRAMES[next]?.name });
+      return;
+    }
     // Esc: đang mở gợi ý / câu mẫu thì đóng; không mở gì thì lưu bài rồi về menu — không bao giờ thoát.
     if (key.escape) {
       if (hint || reveal) {
@@ -1214,7 +1232,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     (wrapped ? 2 : 0) +
     (busy ? 1 : 0) +
     (error ? rowsOf(error, W) : 0) +
-    rowsOf('⏎ chấm / câu tiếp   ↑↓ đổi câu   tab gợi ý ×2   ^R xem mẫu   ^N đề khác   ^L lịch sử   esc đóng gợi ý / menu   ^C lưu & thoát', W) +
+    rowsOf('⏎ chấm / câu tiếp   ↑↓ đổi câu   tab gợi ý ×2   ^R xem mẫu   ^N đề khác   ^L lịch sử   ^T màu khung (hồng)   esc đóng gợi ý / menu   ^C lưu & thoát', W) +
     2;
   let from = 0;
   let to = steps.length - 1;
@@ -1281,7 +1299,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                   key={`${i}-${l.vi}-${active ? 'on' : 'off'}`}
                   flexDirection="column"
                   borderStyle={active ? 'round' : 'single'}
-                  borderColor={active ? WARM : FAINT}
+                  borderColor={active ? frame.color : FAINT}
                   borderTop={active}
                   borderRight={active}
                   borderBottom={active}
@@ -1297,7 +1315,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                             <Spinner type="dots" />{' '}
                           </Text>
                         ) : (
-                          <Text color={fb ? toneOf(fb) : active ? WARM : MUTED}>{mark} </Text>
+                          <Text color={fb ? toneOf(fb) : active ? frame.color : MUTED}>{mark} </Text>
                         )}
                         <Text color={MUTED}>{String(i + 1).padStart(2, '0')} </Text>
                       </Text>
@@ -1309,7 +1327,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                   </Hang>
                   {active ? (
                     <>
-                      <Hang indent={3} trim={false} mark={<Text color={WARM}>› </Text>}>
+                      <Hang indent={3} trim={false} mark={<Text color={frame.color}>› </Text>}>
                         {busy ? answers[i] : <AnswerInput value={answers[i] ?? ''} onChange={setAnswer} />}
                       </Hang>
                       {pending[i] ? (
@@ -1412,6 +1430,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
           ['^R', 'xem mẫu'],
           ['^N', 'đề khác'],
           ['^L', 'lịch sử'],
+          ['^T', `màu khung (${frame.name})`],
           ['esc', 'đóng gợi ý / menu'],
           ['^C', 'lưu & thoát'],
         ]}
