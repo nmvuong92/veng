@@ -250,6 +250,84 @@ function AnswerInput({
   return useLineEditor(value, onChange, true);
 }
 
+// Chữ VENG kiểu "ANSI Shadow".
+const LOGO = [
+  '██╗   ██╗███████╗███╗   ██╗ ██████╗ ',
+  '██║   ██║██╔════╝████╗  ██║██╔════╝ ',
+  '██║   ██║█████╗  ██╔██╗ ██║██║  ███╗',
+  '╚██╗ ██╔╝██╔══╝  ██║╚██╗██║██║   ██║',
+  ' ╚████╔╝ ███████╗██║ ╚████║╚██████╔╝',
+  '  ╚═══╝  ╚══════╝╚═╝  ╚═══╝ ╚═════╝ ',
+];
+const NOISE = '░▒▓█▚▞▙▟@#%&*';
+const QUOTES = [
+  'Mỗi câu dịch hôm nay là một phản xạ ngày mai.',
+  'Sai hôm nay để nói trơn ngày mai.',
+  'Fluency is a habit, not a talent.',
+  'Small reps. Big voice.',
+  'Nói chậm cũng được — miễn là nói.',
+  'Đừng dịch trong đầu. Nghĩ bằng tiếng Anh.',
+  'One sentence at a time.',
+];
+const SPLASH_MS = 2600;
+
+/**
+ * Màn chào ~2s: chữ VENG "giải mã" từ nhiễu quét trái → phải, dải màu lướt qua,
+ * khẩu hiệu tự gõ. Bấm phím bất kỳ để bỏ qua.
+ */
+function Splash({ lines, onDone }: { lines: number | null; onDone: () => void }) {
+  const [t, setT] = useState(0);
+  // Mỗi ô một độ trễ ngẫu nhiên — chữ hiện lấm tấm chứ không thẳng tắp.
+  const jitter = useRef(LOGO.map((row) => [...row].map(() => Math.random() * 260))).current;
+  const quote = useRef(QUOTES[Math.floor(Math.random() * QUOTES.length)] as string).current;
+  useEffect(() => {
+    const start = Date.now();
+    const id = setInterval(() => {
+      const el = Date.now() - start;
+      setT(el);
+      if (el >= SPLASH_MS) {
+        clearInterval(id);
+        onDone();
+      }
+    }, 40);
+    return () => clearInterval(id);
+  }, [onDone]);
+  useInput(() => onDone());
+
+  const width = LOGO[0]?.length ?? 1;
+  const logo = LOGO.map((row, y) =>
+    [...row]
+      .map((ch, x) => {
+        if (ch === ' ') return ch;
+        const at = (x / width) * 700 + (jitter[y]?.[x] ?? 0);
+        if (t >= at) return ch;
+        return t >= at - 350 ? (NOISE[Math.floor(Math.random() * NOISE.length)] as string) : ' ';
+      })
+      .join(''),
+  ).join('\n');
+  // Dải màu trôi: xoay mảng màu theo thời gian.
+  const palette = [BRAND, '#7fd8c6', WARM, '#f0c46a', BRAND, '#2f7f72'];
+  const shift = Math.floor(t / 90) % palette.length;
+  const colors = [...palette.slice(shift), ...palette.slice(0, shift)];
+  const typed = (txt: string, from: number) =>
+    txt.slice(0, Math.max(0, Math.floor((t - from) / 14)));
+
+  return (
+    <Box flexDirection="column" paddingX={2} paddingY={1}>
+      <Gradient colors={colors}>{logo}</Gradient>
+      <Box marginTop={1} flexDirection="column">
+        <Text color="gray">{typed('▍ phản xạ Việt → Anh · ngay trong terminal', 650)}</Text>
+        <Text bold color={WARM}>
+          {typed(`“${quote}”`, 900)}
+        </Text>
+        {lines ? (
+          <Text color="gray">{typed(`  ${lines} câu đã luyện — tiếp nào.`, 1300)}</Text>
+        ) : null}
+      </Box>
+    </Box>
+  );
+}
+
 /** Phím chọn nhanh ở menu: 1–9 rồi a–z. */
 const HOTKEYS = '123456789abcdefghijklmnopqrstuvwxyz';
 const LABEL_W = Math.max(...KINDS.map((k) => k.label.length)) + 2;
@@ -281,6 +359,8 @@ function KindProgress({ st }: { st?: Stats }) {
 export function App({ cfg }: { cfg: Config }) {
   const { exit } = useApp();
   const [kind, setKind] = useState<Kind | null>(null);
+  const [splash, setSplash] = useState(true);
+  const endSplash = useCallback(() => setSplash(false), []);
   const [cur, setCur] = useState(() => Math.max(0, KINDS.findIndex((k) => k.id === cfg.lastKind)));
   /** Tiến độ từng loại — tải lại mỗi lần về menu. */
   const [progress, setProgress] = useState<Record<string, Stats>>({});
@@ -307,8 +387,12 @@ export function App({ cfg }: { cfg: Config }) {
       const i = input.length !== 1 || key.ctrl || key.meta ? -1 : HOTKEYS.indexOf(input.toLowerCase());
       if (i >= 0 && i < KINDS.length) setCur(i);
     },
-    { isActive: !kind },
+    { isActive: !kind && !splash },
   );
+  if (splash) {
+    const total = Object.values(progress).reduce((n, st) => n + st.lines, 0);
+    return <Splash lines={total || null} onDone={endSplash} />;
+  }
   if (kind) return <Practice key={kind.id} cfg={cfg} kind={kind} onBack={() => setKind(null)} />;
   return (
     <Box flexDirection="column" paddingX={1}>
