@@ -29,6 +29,15 @@ const MUTED = '#9aa3ad';
 function useLineEditor(value: string, onChange: (v: string) => void, active: boolean, mask = false) {
   const [cur, setCur] = useState(value.length);
   useEffect(() => setCur((c) => Math.min(c, value.length)), [value]);
+  // Con trỏ khối nhấp nháy ~530ms như terminal; gõ / di chuyển thì sáng lại và đếm nhịp từ đầu.
+  const [on, setOn] = useState(true);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: value/cur chỉ để khởi động lại nhịp
+  useEffect(() => {
+    setOn(true);
+    if (!active) return;
+    const id = setInterval(() => setOn((o) => !o), 530);
+    return () => clearInterval(id);
+  }, [value, cur, active]);
   useInput(
     (input, key) => {
       if (key.return || key.tab || key.upArrow || key.downArrow || key.escape) return;
@@ -64,7 +73,7 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
   return (
     <Text>
       {shown.slice(0, cur)}
-      <Text inverse>{shown[cur] ?? ' '}</Text>
+      <Text inverse={on}>{shown[cur] ?? ' '}</Text>
       {shown.slice(cur + 1)}
     </Text>
   );
