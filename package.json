@@ -1,6 +1,6 @@
 {
   "name": "veng",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Luyện thì tiếng Anh trong terminal — dịch Việt → Anh, AI chấm",
   "scripts": {
     "build": "node build.mjs",

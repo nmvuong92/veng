@@ -293,37 +293,18 @@ export function App({ cfg }: { cfg: Config }) {
         .catch(() => {});
     }
   }, [cfg, kind]);
-  /** Bấm phím tắt: tô sáng trước, chờ một nhịp rồi vào — kịp đổi ý nếu bấm nhầm. */
-  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelPending = () => {
-    if (pending.current) clearTimeout(pending.current);
-    pending.current = null;
-  };
-  useEffect(() => cancelPending, []);
-  const open = (i: number) => {
-    cancelPending();
-    saveLastKind(KINDS[i].id);
-    setKind(KINDS[i]);
-  };
   useInput(
     (input, key) => {
       if (key.ctrl && (input === 'c' || input === 'd')) return exit();
-      if (key.upArrow) {
-        cancelPending();
-        setCur((c) => (c + KINDS.length - 1) % KINDS.length);
+      if (key.upArrow) setCur((c) => (c + KINDS.length - 1) % KINDS.length);
+      if (key.downArrow || key.tab) setCur((c) => (c + 1) % KINDS.length);
+      if (key.return) {
+        saveLastKind(KINDS[cur].id);
+        setKind(KINDS[cur]);
       }
-      if (key.downArrow || key.tab) {
-        cancelPending();
-        setCur((c) => (c + 1) % KINDS.length);
-      }
-      if (key.escape) cancelPending();
-      if (key.return) open(cur);
+      // Phím tắt chỉ dời con trỏ — vào bài vẫn phải Enter.
       const i = key.ctrl || key.meta ? -1 : HOTKEYS.indexOf(input.toLowerCase());
-      if (i >= 0 && i < KINDS.length) {
-        cancelPending();
-        setCur(i);
-        pending.current = setTimeout(() => open(i), 1200);
-      }
+      if (i >= 0 && i < KINDS.length) setCur(i);
     },
     { isActive: !kind },
   );
@@ -349,7 +330,7 @@ export function App({ cfg }: { cfg: Config }) {
       <Keys
         items={[
           ['↑↓', 'chọn'],
-          ['1–9 a–e', 'chọn nhanh'],
+          ['1–9 a–e', 'nhảy tới'],
           ['⏎', 'vào luyện'],
           ['^C', 'thoát'],
         ]}
