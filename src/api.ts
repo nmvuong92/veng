@@ -131,6 +131,34 @@ export interface Vocab {
   lines: { index: number; words: VocabWord[] }[];
 }
 
+export interface HistoryItem {
+  id: string;
+  drillKey: string;
+  lineIndex: number;
+  vi: string;
+  answer: string;
+  score: number;
+  meaningOk: boolean;
+  tenseOk: boolean;
+  corrected: string;
+  tenseNote: string;
+  createdAt: number;
+}
+/** Một bài đã làm: câu đã chấm (lần mới nhất), tổng kết đoạn, đề gốc để học lại — như tab Lịch sử trên web. */
+export interface HistoryPaper {
+  drillKey: string;
+  lastAt: number;
+  lines: HistoryItem[];
+  summary: Summary | null;
+  drill: Drill;
+}
+export interface HistoryPage {
+  items: HistoryPaper[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -188,6 +216,8 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
     }) => call<Summary>(`${k}/summary`, body),
     vocab: (lines: { vi: string; answer: string }[]) => call<Vocab>(`${k}/vocab`, { lines }),
     reset: () => call<{ cycle: number }>(`${k}/reset`, {}),
+    history: (filter: 'weak' | 'all', page: number, pageSize: number) =>
+      call<HistoryPage>(`${k}/history?filter=${filter}&page=${page}&pageSize=${pageSize}`),
   };
 }
 export type Client = ReturnType<typeof client>;

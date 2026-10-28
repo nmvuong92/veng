@@ -8,6 +8,7 @@ import {
   client,
   type Drill,
   type Feedback,
+  type HistoryPage,
   KINDS,
   type Kind,
   linesOf,
@@ -424,6 +425,239 @@ export function App({ cfg }: { cfg: Config }) {
   );
 }
 
+const HISTORY_FILTERS = [
+  { id: 'weak', label: 'Cần cải thiện' },
+  { id: 'all', label: 'Tất cả' },
+] as const;
+const HISTORY_PAGE = 8;
+
+const scoreColor = (n: number) => (n >= 8 ? BRAND : n >= 6 ? WARM : BAD);
+const pad2 = (n: number) => String(n).padStart(2, '0');
+/** "15/09 10:05" — tự ghép vì toLocaleString('vi-VN') của Node ra "10:05 15-09". */
+const when = (ts: number) => {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
+
+/** Tô đỏ đúng những mảnh AI chỉ ra là sai (khớp nguyên văn) — giống web. */
+function MarkWrong({ text, wrong }: { text: string; wrong: string[] }) {
+  const parts = wrong
+    .filter(Boolean)
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .sort((a, b) => b.length - a.length);
+  if (!parts.length) return <Text>{text}</Text>;
+  return (
+    <Text>
+      {text.split(new RegExp(`(${parts.join('|')})`, 'g')).map((chunk, i) =>
+        i % 2 ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: mảnh text không có id riêng
+          <Text key={i} color={BAD} underline>
+            {chunk}
+          </Text>
+        ) : (
+          chunk
+        ),
+      )}
+    </Text>
+  );
+}
+
+/**
+ * Lịch sử theo bài (cùng endpoint với tab Lịch sử trên web): ↑↓ chọn bài, bài đang chọn
+ * mở ra đoạn đã viết (lỗi tô đỏ), cần chú ý, đoạn đúng; ⏎ xem từng câu; r học lại.
+ */
+function HistoryView({
+  api,
+  axis,
+  onRetry,
+  onClose,
+}: {
+  api: Client;
+  axis: string;
+  onRetry: (d: Drill) => void;
+  onClose: () => void;
+}) {
+  const [filter, setFilter] = useState<'weak' | 'all'>('weak');
+  const [page, setPage] = useState(1);
+  const [data, setData] = useState<HistoryPage | null>(null);
+  const [error, setError] = useState('');
+  const [cur, setCur] = useState(0);
+  const [detail, setDetail] = useState(false);
+
+  useEffect(() => {
+    setData(null);
+    setError('');
+    api
+      .history(filter, page, HISTORY_PAGE)
+      .then((d) => {
+        setData(d);
+        setCur(0);
+        setDetail(false);
+      })
+      .catch((e) => setError((e as Error).message));
+  }, [api, filter, page]);
+
+  const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+  const items = data?.items ?? [];
+  const sel = items[cur];
+
+  useInput((input, key) => {
+    if (key.escape || (key.ctrl && input === 'l')) return onClose();
+    if (key.tab) {
+      setFilter((f) => (f === 'weak' ? 'all' : 'weak'));
+      return setPage(1);
+    }
+    if (key.upArrow) {
+      setDetail(false);
+      return setCur((c) => Math.max(0, c - 1));
+    }
+    if (key.downArrow) {
+      setDetail(false);
+      return setCur((c) => Math.min(items.length - 1, c + 1));
+    }
+    if (key.leftArrow && page > 1) return setPage(page - 1);
+    if (key.rightArrow && page < pages) return setPage(page + 1);
+    if (key.return && sel) return setDetail((d) => !d);
+    if (input === 'r' && sel) onRetry(sel.drill);
+  });
+
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text>
+        <Text bold>Lịch sử </Text>
+        {HISTORY_FILTERS.map((f) => (
+          <Text key={f.id} color={f.id === filter ? WARM : 'gray'} bold={f.id === filter}>
+            {f.id === filter ? ` [${f.label}] ` : `  ${f.label}  `}
+          </Text>
+        ))}
+        {data ? (
+          <Text color="gray">
+            {' '}
+            · {data.total} bài · trang {page}/{pages}
+          </Text>
+        ) : null}
+      </Text>
+      {error ? <Text color={BAD}>✗ {error}</Text> : null}
+      {!data && !error ? (
+        <Text color={BRAND}>
+          <Spinner type="dots" /> Đang tải…
+        </Text>
+      ) : null}
+      {data && !items.length ? (
+        <Text color="gray">
+          {filter === 'weak' ? 'Không còn bài nào cần cải thiện 🎉 — Tab để xem tất cả.' : 'Chưa làm bài nào.'}
+        </Text>
+      ) : null}
+      <Box flexDirection="column" marginTop={1}>
+        {items.map((p, i) => {
+          const active = i === cur;
+          const good = p.lines.filter((l) => l.meaningOk && l.tenseOk).length;
+          const avg = Math.round((p.lines.reduce((n, l) => n + l.score, 0) / p.lines.length) * 10) / 10;
+          const total = p.drill.lines?.length ?? p.lines.length;
+          const first = p.lines[0]?.vi ?? '';
+          return (
+            <Box key={p.drillKey} flexDirection="column" marginBottom={active ? 1 : 0}>
+              <Text>
+                <Text color={active ? WARM : 'gray'}>{active ? '▸ ' : '  '}</Text>
+                <Text bold color={scoreColor(avg)}>
+                  {String(avg).padStart(4)}/10
+                </Text>
+                <Text color="gray">
+                  {'  '}đúng {good}/{p.lines.length}
+                  {p.lines.length < total ? ` · làm ${p.lines.length}/${total}` : ''} · {when(p.lastAt)}
+                  {'  '}
+                </Text>
+                <Text bold={active} dimColor={!active}>
+                  {first.length > 48 ? `${first.slice(0, 47)}…` : first}
+                </Text>
+              </Text>
+              {active ? (
+                <Box
+                  flexDirection="column"
+                  marginLeft={4}
+                  paddingLeft={1}
+                  borderStyle="bold"
+                  borderTop={false}
+                  borderRight={false}
+                  borderBottom={false}
+                  borderColor={scoreColor(avg)}
+                >
+                  {p.drill.context ? <Text color="gray">🗣 {p.drill.context}</Text> : null}
+                  <Text color="gray">bạn viết</Text>
+                  <Text>
+                    {p.lines.map((l) => (
+                      <Text key={l.id}>
+                        <MarkWrong
+                          text={l.answer}
+                          wrong={p.summary?.lines.find((x) => x.index === l.lineIndex)?.wrong ?? []}
+                        />{' '}
+                      </Text>
+                    ))}
+                  </Text>
+                  {p.summary && (p.summary.overall || p.summary.focus.length) ? (
+                    <Box flexDirection="column" marginTop={1}>
+                      <Text color={WARM}>cần chú ý</Text>
+                      {p.summary.overall ? <Text>{p.summary.overall}</Text> : null}
+                      {p.summary.focus.map((f) => (
+                        <Text key={f} color="gray">
+                          • {f}
+                        </Text>
+                      ))}
+                    </Box>
+                  ) : null}
+                  <Box flexDirection="column" marginTop={1}>
+                    <Text color={BRAND}>đoạn đúng</Text>
+                    <Text bold>{p.lines.map((l) => l.corrected || l.answer).join(' ')}</Text>
+                  </Box>
+                  {detail ? (
+                    <Box flexDirection="column" marginTop={1}>
+                      {p.lines.map((l) => (
+                        <Box key={l.id} flexDirection="column" marginBottom={1}>
+                          <Text>
+                            <Text color={scoreColor(l.score)}>
+                              {l.meaningOk && l.tenseOk ? '✓' : '✗'} {l.score}/10{' '}
+                            </Text>
+                            <Text color="gray">
+                              {String(l.lineIndex + 1).padStart(2, '0')} {l.vi}
+                            </Text>
+                          </Text>
+                          <Text>
+                            {'   '}› {l.answer}
+                            <Text color="gray">
+                              {'   '}nghĩa {l.meaningOk ? '✓' : '✗'} · {axis} {l.tenseOk ? '✓' : '✗'}
+                            </Text>
+                          </Text>
+                          {l.corrected && norm(l.corrected) !== norm(l.answer) ? (
+                            <Text color={BRAND}>{`   → ${l.corrected}`}</Text>
+                          ) : null}
+                          {l.tenseNote ? <Text color="gray">{`   ⏱ ${l.tenseNote}`}</Text> : null}
+                        </Box>
+                      ))}
+                    </Box>
+                  ) : (
+                    <Text color="gray">⏎ xem từng câu ({p.lines.length})</Text>
+                  )}
+                </Box>
+              ) : null}
+            </Box>
+          );
+        })}
+      </Box>
+      <Keys
+        items={[
+          ['↑↓', 'chọn bài'],
+          ['⏎', 'từng câu'],
+          ['r', 'học lại bài này'],
+          ['tab', 'lọc'],
+          ['←→', 'trang'],
+          ['esc', 'về bài đang làm'],
+        ]}
+      />
+    </Box>
+  );
+}
+
 function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () => void }) {
   const { exit } = useApp();
   const api = useRef<Client>(client(cfg, kind.id)).current;
@@ -435,6 +669,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const [hint, setHint] = useState(0);
   const [vocab, setVocab] = useState<Vocab | 'loading' | { error: string } | null>(null);
   const [reveal, setReveal] = useState(false);
+  const [view, setView] = useState<'drill' | 'history'>('drill');
   const [busy, setBusy] = useState<string | null>('Đang mở bài…');
   const [error, setError] = useState('');
   const [stats, setStats] = useState<Stats | null>(null);
@@ -589,8 +824,18 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     back ? onBack() : exit();
   }
 
+  // Học lại một bài từ lịch sử: nạp đúng đề đó, ô trả lời để trống — như web.
+  const retry = (d: Drill) => {
+    load(d);
+    const n = linesOf(d).length;
+    void api.saveState({ drill: d, answers: Array(n).fill(''), feedbacks: Array(n).fill(null) }).catch(() => {});
+    setView('drill');
+  };
+
   useInput((input, key) => {
     if (key.ctrl && (input === 'c' || input === 'd')) return void quit();
+    if (view !== 'drill') return;
+    if (key.ctrl && input === 'l') return setView('history');
     // Esc: đang mở gợi ý / câu mẫu thì đóng; không mở gì thì lưu bài rồi về menu — không bao giờ thoát.
     if (key.escape) {
       if (hint || reveal) {
@@ -649,6 +894,15 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
       next[cur] = v;
       return next;
     });
+
+  if (view === 'history') {
+    return (
+      <Box flexDirection="column" paddingX={1}>
+        <Header stats={stats} kind={kind} />
+        <HistoryView api={api} axis={kind.axis} onRetry={retry} onClose={() => setView('drill')} />
+      </Box>
+    );
+  }
 
   const done = feedbacks.filter(Boolean).length;
   const right = feedbacks.filter((f) => f?.meaningOk && f?.tenseOk).length;
@@ -761,6 +1015,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
           ['tab', 'gợi ý ×2'],
           ['^R', 'xem mẫu'],
           ['^N', 'đề khác'],
+          ['^L', 'lịch sử'],
           ['esc', 'đóng gợi ý / menu'],
           ['^C', 'lưu & thoát'],
         ]}
