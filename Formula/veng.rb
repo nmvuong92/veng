@@ -1,8 +1,8 @@
 class Veng < Formula
   desc "Luyện thì tiếng Anh trong terminal — dịch Việt → Anh, AI chấm"
   homepage "https://github.com/nmvuong92/veng"
-  url "https://github.com/nmvuong92/veng/releases/download/v0.7.0/veng-0.7.0.tgz"
-  sha256 "d7084767139331d3ce2098a9a988ec526bb4a3957dfb7f0e88a6df17c6a34c13"
+  url "https://github.com/nmvuong92/veng/releases/download/v0.7.1/veng-0.7.1.tgz"
+  sha256 "57641f6422ee1552d8641aba724fd63e96ab57834ea534b1bbbfe41db19cd455"
   license "MIT"
 
   depends_on "node"
