@@ -74,13 +74,24 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
 const LEAD_SPACE = /^((?:\x1b\[[0-9;]*m)*) /;
 
 /** Dòng hai cột: dấu/số cố định bên trái, chữ bên phải — câu dài xuống dòng vẫn thẳng hàng với đầu câu. */
-function Hang({ mark, indent = 0, children }: { mark: ReactNode; indent?: number; children: ReactNode }) {
+function Hang({
+  mark,
+  indent = 0,
+  trim = true,
+  children,
+}: {
+  mark: ReactNode;
+  indent?: number;
+  /** Ô nhập liệu phải để false: con trỏ là một dấu cách tô ngược màu, bỏ đi là mất con trỏ. */
+  trim?: boolean;
+  children: ReactNode;
+}) {
   return (
     <Box marginLeft={indent}>
       <Box flexShrink={0}>{mark}</Box>
       <Box flexGrow={1} flexShrink={1}>
         {/* Ink ngắt dòng với trim:false → ngắt đúng chỗ dấu cách thì dòng sau dư 1 khoảng trắng đầu; bỏ đi. */}
-        <Transform transform={(line) => line.replace(LEAD_SPACE, '$1')}>
+        <Transform transform={(line, i) => (trim && i > 0 ? line.replace(LEAD_SPACE, '$1') : line)}>
           <Text>{children}</Text>
         </Transform>
       </Box>
@@ -1068,7 +1079,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                   </Hang>
                   {active ? (
                     <>
-                      <Hang indent={4} mark={<Text color={WARM}>› </Text>}>
+                      <Hang indent={4} trim={false} mark={<Text color={WARM}>› </Text>}>
                         {busy ? answers[i] : <AnswerInput value={answers[i] ?? ''} onChange={setAnswer} />}
                       </Hang>
                       {hint ? (
