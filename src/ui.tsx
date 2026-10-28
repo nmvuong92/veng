@@ -94,18 +94,39 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
 // biome-ignore lint/suspicious/noControlCharactersInRegex: bỏ qua mã màu ANSI ở đầu dòng
 const LEAD_SPACE = /^((?:\x1b\[[0-9;]*m)*) /;
 
+/**
+ * Tô màu / đậm / mờ cho MỘT dòng đã ngắt. Phải tô sau khi ngắt: Ink tô trước rồi mới ngắt
+ * (wrap-ansi), mà wrap-ansi không mở lại màu truecolor ở dòng sau → dòng 2 ra chữ trắng trơn.
+ * Span lồng bên trong (vd điểm, công thức) đóng màu bằng 39/22 thì mở lại kiểu của khối ngay sau.
+ */
+function lineStyle(line: string, color?: string, bold = false, dim = false): string {
+  const weight = `${bold ? '\x1b[1m' : ''}${dim ? '\x1b[2m' : ''}`;
+  const hex = color?.match(/^#(..)(..)(..)$/);
+  const fg = hex ? `\x1b[38;2;${hex.slice(1).map((h) => Number.parseInt(h, 16)).join(';')}m` : '';
+  if (!weight && !fg) return line;
+  let out = line;
+  if (fg) out = out.replaceAll('\x1b[39m', `\x1b[39m${fg}`);
+  if (weight) out = out.replaceAll('\x1b[22m', `\x1b[22m${weight}`);
+  return `${weight}${fg}${out}${fg ? '\x1b[39m' : ''}${weight ? '\x1b[22m' : ''}`;
+}
+
 /** Dòng hai cột: dấu/số cố định bên trái, chữ bên phải — câu dài xuống dòng vẫn thẳng hàng với đầu câu. */
 function Hang({
   mark,
   indent = 0,
   trim = true,
   dim = false,
+  color,
+  bold = false,
   children,
 }: {
   mark: ReactNode;
   indent?: number;
   /** Câu không đang làm: chữ "faint" (terminal không có opacity). */
   dim?: boolean;
+  /** Màu / đậm của cả khối chữ — tô lại TỪNG DÒNG sau khi ngắt (xem lineStyle). */
+  color?: string;
+  bold?: boolean;
   /** Ô nhập liệu phải để false: con trỏ là một dấu cách tô ngược màu, bỏ đi là mất con trỏ. */
   trim?: boolean;
   children: ReactNode;
@@ -117,8 +138,10 @@ function Hang({
       </Box>
       <Box flexGrow={1} flexShrink={1}>
         {/* Ink ngắt dòng với trim:false → ngắt đúng chỗ dấu cách thì dòng sau dư 1 khoảng trắng đầu; bỏ đi. */}
-        <Transform transform={(line, i) => (trim && i > 0 ? line.replace(LEAD_SPACE, '$1') : line)}>
-          <Text dimColor={dim}>{children}</Text>
+        <Transform
+          transform={(line, i) => lineStyle(trim && i > 0 ? line.replace(LEAD_SPACE, '$1') : line, color, bold, dim)}
+        >
+          <Text>{children}</Text>
         </Transform>
       </Box>
     </Box>
@@ -149,16 +172,21 @@ const Check = ({ ok, label }: { ok: boolean; label: string }) => (
 
 function Header({ stats, kind }: { stats: Stats | null; kind?: Kind }) {
   return (
-    <Box justifyContent="space-between" marginBottom={1}>
-      <Text>
-        <Gradient colors={[BRAND, WARM]}>▍veng</Gradient>
-        <Text color={MUTED}> · {kind ? kind.label : 'luyện dịch'} · Việt → Anh, AI chấm</Text>
-      </Text>
-      {stats ? (
-        <Text color={MUTED}>
-          {stats.doneDrills}/{stats.totalDrills} đoạn · ⌀ <Text color={WARM}>{stats.avg}</Text> · đúng{' '}
-          {kind?.axis} {stats.tenseOk}/{stats.lines}
+    <Box justifyContent="space-between" marginBottom={1} gap={2}>
+      {/* Màn hẹp: bên trái tự cắt "…", số liệu bên phải giữ nguyên — không chồng chữ lên nhau. */}
+      <Box flexShrink={1}>
+        <Text wrap="truncate-end">
+          <Gradient colors={[BRAND, WARM]}>▍veng</Gradient>
+          <Text color={MUTED}> · {kind ? kind.label : 'luyện dịch'} · Việt → Anh, AI chấm</Text>
         </Text>
+      </Box>
+      {stats ? (
+        <Box flexShrink={0}>
+          <Text color={MUTED}>
+            {stats.doneDrills}/{stats.totalDrills} đoạn · ⌀ <Text color={WARM}>{stats.avg}</Text> · đúng{' '}
+            {kind?.axis} {stats.tenseOk}/{stats.lines}
+          </Text>
+        </Box>
       ) : null}
     </Box>
   );
@@ -185,15 +213,12 @@ function FeedbackView({
   // Câu đúng nằm ngay dưới câu đã nhập (✓ thẳng cột với ›) để so từng chữ; nhận xét xuống dưới.
   return (
     <Box flexDirection="column" marginLeft={3}>
-      <Hang mark={<Text color={BRAND}>✓ </Text>}>
-        <Text bold color={BRAND}>
-          {right}
-        </Text>
+      <Hang mark={<Text color={BRAND}>✓ </Text>} bold color={BRAND}>
+        {right}
       </Hang>
       {(lean ? [] : (fb.preps ?? [])).map((p) => (
-        <Hang key={p.phrase} indent={2} mark={<Text color={MUTED}>· </Text>}>
-          <Text color={WARM}>{p.phrase}</Text>
-          <Text color={MUTED}> · {p.why}</Text>
+        <Hang key={p.phrase} indent={2} color={MUTED} mark={<Text color={MUTED}>· </Text>}>
+          <Text color={WARM}>{p.phrase}</Text> · {p.why}
         </Hang>
       ))}
       <Box flexDirection="column" marginLeft={2} marginTop={1}>
@@ -256,8 +281,8 @@ function GradedLines({ answer, fb, sample, dim = false }: { answer: string; fb: 
         {answer}
       </Hang>
       {perfect ? null : (
-        <Hang indent={3} dim={dim} mark={<Text color={BRAND}>→ </Text>}>
-          <Text color={BRAND}>{right}</Text>
+        <Hang indent={3} dim={dim} color={BRAND} mark={<Text color={BRAND}>→ </Text>}>
+          {right}
         </Hang>
       )}
     </>
@@ -1386,6 +1411,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                 >
                   <Hang
                     dim={!active}
+                    bold={active}
                     mark={
                       <Text>
                         {pending[i] ? (
@@ -1399,7 +1425,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       </Text>
                     }
                   >
-                    <Text bold={active}>{l.vi}</Text>
+                    {l.vi}
                     {!active && fb ? <Text color={toneOf(fb)}> {fb.score}/10</Text> : null}
                     {pending[i] && !active ? <Text color={MUTED}> · đang chấm…</Text> : null}
                   </Hang>
@@ -1417,16 +1443,16 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       ) : null}
                       {hint ? (
                         <Box flexDirection="column" marginLeft={3}>
-                          <Hang mark={<Text>💡 </Text>}>
-                            <Text color={WARM}>{l.hint}</Text>
+                          <Hang mark={<Text>💡 </Text>} color={WARM}>
+                            {l.hint}
                             {l.patterns?.length ? <Text color={MUTED}> · {l.patterns.join(' · ')}</Text> : null}
                           </Hang>
                           {hint === 2 ? <VocabHint vocab={vocab} index={i} /> : null}
                         </Box>
                       ) : null}
                       {reveal && !fb ? (
-                        <Hang indent={3} mark={<Text color={MUTED}>◆ mẫu </Text>}>
-                          <Text color={BRAND}>{l.answer}</Text>
+                        <Hang indent={3} color={BRAND} mark={<Text color={MUTED}>◆ mẫu </Text>}>
+                          {l.answer}
                         </Hang>
                       ) : null}
                       {fb && burst?.i === i ? (
@@ -1453,8 +1479,8 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       <GradedLines dim answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
                     </>
                   ) : answers[i] ? (
-                    <Hang indent={3} dim mark={<Text color={MUTED}>› </Text>}>
-                      <Text color={MUTED}>{answers[i]}</Text>
+                    <Hang indent={3} dim color={MUTED} mark={<Text color={MUTED}>› </Text>}>
+                      {answers[i]}
                     </Hang>
                   ) : null}
                 </Box>
