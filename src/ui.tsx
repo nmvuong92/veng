@@ -337,6 +337,106 @@ function Splash({ lines, onDone }: { lines: number | null; onDone: () => void })
   );
 }
 
+const VERDICT_MS = 1500;
+const CHEERS = {
+  good: ['CHÍNH XÁC', 'QUÁ ĐỈNH', 'CHUẨN KHÔNG CẦN CHỈNH', 'PHẢN XẠ TỐT', 'NHƯ NGƯỜI BẢN XỨ'],
+  near: ['GẦN LẮM RỒI', 'Ý ĐÚNG RỒI — CHỈNH CHÚT XÍU', 'SUÝT NỮA'],
+  bad: ['CHƯA ĐÚNG', 'SAI ĐỂ NHỚ LÂU', 'THỬ LẠI NÀO'],
+};
+const SPARKS = '✦✧★✶·⋆';
+const pick = <T,>(a: readonly T[]) => a[Math.floor(Math.random() * a.length)] as T;
+
+/**
+ * Hiệu ứng ngay sau khi AI chấm (~1.5s): đúng = pháo hoa bung hai bên + điểm đếm lên,
+ * gần đúng = chữ vàng nảy, sai = chữ đỏ rung + glitch rồi rõ dần. Xong thì tự tắt.
+ */
+function Verdict({ fb, streak, onEnd }: { fb: Feedback; streak: number; onEnd: () => void }) {
+  const tone: keyof typeof CHEERS = fb.meaningOk && fb.tenseOk ? 'good' : fb.meaningOk ? 'near' : 'bad';
+  const color = tone === 'good' ? BRAND : tone === 'near' ? WARM : BAD;
+  const word = useRef(pick(CHEERS[tone])).current;
+  // Mỗi tia một tốc độ / ký tự riêng, bung ra hai bên trên 3 hàng.
+  const sparks = useRef(
+    Array.from({ length: 24 }, (_, k) => ({
+      row: k % 3,
+      dir: k % 2 ? 1 : -1,
+      v: 0.012 + Math.random() * 0.03,
+      ch: pick([...SPARKS]),
+    })),
+  ).current;
+  const [t, setT] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    const id = setInterval(() => {
+      const el = Date.now() - start;
+      setT(el);
+      if (el >= VERDICT_MS) {
+        clearInterval(id);
+        onEnd();
+      }
+    }, 33);
+    return () => clearInterval(id);
+  }, [onEnd]);
+
+  const W = 52;
+  const mid = Math.floor(W / 2);
+  const p = Math.min(1, t / 650);
+  const ease = 1 - (1 - p) ** 3;
+  const score = Math.round(ease * fb.score);
+  const banner = ` ${tone === 'good' ? '✔' : tone === 'near' ? '≈' : '✘'} ${word} `;
+  // Sai: rung lắc tắt dần + 400ms đầu chữ bị nhiễu.
+  const shake = tone === 'bad' ? Math.round(Math.sin(t / 22) * 3 * Math.max(0, 1 - t / 700)) : 0;
+  const shown =
+    tone === 'bad' && t < 400
+      ? [...banner].map((c) => (c !== ' ' && Math.random() < 0.5 - t / 900 ? pick([...'▓▒░#%@']) : c)).join('')
+      : banner;
+  // Gần đúng: nảy lên một nhịp (đệm dòng trống trên).
+  const bounce = tone === 'near' && t > 150 && t < 450 ? 0 : 1;
+
+  const sparkRow = (row: number) => {
+    const cells = Array<string>(W).fill(' ');
+    if (tone === 'good') {
+      for (const s of sparks) {
+        if (s.row !== row) continue;
+        // ký tự chính + vệt mờ phía sau
+        const d = 4 + s.v * t;
+        const x = Math.round(mid + s.dir * d);
+        const tail = Math.round(mid + s.dir * (d - 2));
+        if (tail >= 0 && tail < W && t < 1200) cells[tail] = '·';
+        if (x >= 0 && x < W && t < 1300) cells[x] = t > 1000 ? '·' : s.ch;
+      }
+    }
+    return cells.join('');
+  };
+  const pad = Math.max(0, mid - Math.floor(banner.length / 2) + shake);
+
+  return (
+    <Box flexDirection="column" marginLeft={4}>
+      <Text color={WARM}>{sparkRow(0)}</Text>
+      {bounce ? null : <Text> </Text>}
+      <Text>
+        {' '.repeat(pad)}
+        <Text bold inverse color={color}>
+          {shown}
+        </Text>
+        <Text bold color={color}>
+          {'  '}
+          {score}/10
+        </Text>
+      </Text>
+      <Text>
+        <Text color={WARM}>{sparkRow(1)}</Text>
+      </Text>
+      <Text>
+        {' '.repeat(Math.max(0, mid - 10))}
+        <Text color={color}>{'●'.repeat(score)}</Text>
+        <Text color="gray">{'○'.repeat(10 - score)}</Text>
+        {tone === 'good' && streak >= 2 ? <Text color={WARM}>{`  🔥 ${streak} câu liên tiếp`}</Text> : null}
+      </Text>
+      <Text color={WARM}>{sparkRow(2)}</Text>
+    </Box>
+  );
+}
+
 /** Phím chọn nhanh ở menu: 1–9 rồi a–z. */
 const HOTKEYS = '123456789abcdefghijklmnopqrstuvwxyz';
 const LABEL_W = Math.max(...KINDS.map((k) => k.label.length)) + 2;
@@ -678,6 +778,10 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const [vocab, setVocab] = useState<Vocab | 'loading' | { error: string } | null>(null);
   const [reveal, setReveal] = useState(false);
   const [view, setView] = useState<'drill' | 'history'>('drill');
+  /** Câu vừa chấm xong → chạy hiệu ứng đúng/sai; key đổi mỗi lần chấm để chạy lại từ đầu. */
+  const [burst, setBurst] = useState<{ i: number; key: number } | null>(null);
+  const streak = useRef(0);
+  const endBurst = useCallback(() => setBurst(null), []);
   const [busy, setBusy] = useState<string | null>('Đang mở bài…');
   const [error, setError] = useState('');
   const [stats, setStats] = useState<Stats | null>(null);
@@ -794,6 +898,8 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
       const next = [...feedbacks];
       next[i] = fb;
       setFeedbacks(next);
+      streak.current = fb.meaningOk && fb.tenseOk ? streak.current + 1 : 0;
+      setBurst({ i, key: Date.now() });
       setGradedAs((g) => {
         const n = [...g];
         n[i] = answers[i] ?? '';
@@ -962,7 +1068,11 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                           </Text>
                         </Box>
                       ) : null}
-                      {fb ? <FeedbackView fb={fb} sample={l.answer} axis={kind.axis} /> : null}
+                      {fb && burst?.i === i ? (
+                        <Verdict key={burst.key} fb={fb} streak={streak.current} onEnd={endBurst} />
+                      ) : fb ? (
+                        <FeedbackView fb={fb} sample={l.answer} axis={kind.axis} />
+                      ) : null}
                       {/* Mạch hỏi / ráp câu / be: câu đáp của người kia, như web — hiện khi đã chấm hoặc xem mẫu. */}
                       {l.reply && (fb || reveal) ? (
                         <Box flexDirection="column" marginLeft={4} marginTop={1}>
