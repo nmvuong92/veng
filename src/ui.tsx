@@ -182,63 +182,63 @@ function FeedbackView({
     ...(norm(sample) !== norm(right) ? [sample] : []),
     ...(fb.natural ?? []),
   ].filter((x, i, arr) => x && norm(x) !== norm(right) && arr.findIndex((y) => norm(y) === norm(x)) === i);
+  // Câu đúng nằm ngay dưới câu đã nhập (✓ thẳng cột với ›) để so từng chữ; nhận xét xuống dưới.
   return (
-    <Box
-      flexDirection="column"
-      marginLeft={3}
-      paddingLeft={1}
-      borderStyle="single"
-      borderTop={false}
-      borderRight={false}
-      borderBottom={false}
-      borderColor={toneOf(fb)}
-    >
-      <Text>
-        <ScoreDots fb={fb} />
-        {'   '}
-        <Check ok={fb.meaningOk} label="nghĩa" />
-        {'   '}
-        <Check ok={fb.tenseOk} label={axis} />
-      </Text>
-      <Text>{fb.comment}</Text>
-      {fb.tenseNote ? <Text color={BRAND}>⏱ {fb.tenseNote}</Text> : null}
-      {fb.fixes?.length ? (
-        <Box flexDirection="column" marginTop={1}>
-          {fb.fixes.map((f) => (
-            <Text key={`${f.wrong}→${f.right}`}>
-              <Text color={BAD} strikethrough>
-                {f.wrong}
+    <Box flexDirection="column" marginLeft={3}>
+      <Hang mark={<Text color={BRAND}>✓ </Text>}>
+        <Text bold color={BRAND}>
+          {right}
+        </Text>
+      </Hang>
+      {(lean ? [] : (fb.preps ?? [])).map((p) => (
+        <Hang key={p.phrase} indent={2} mark={<Text color={MUTED}>· </Text>}>
+          <Text color={WARM}>{p.phrase}</Text>
+          <Text color={MUTED}> · {p.why}</Text>
+        </Hang>
+      ))}
+      <Box flexDirection="column" marginLeft={2} marginTop={1}>
+        <Text>
+          <ScoreDots fb={fb} />
+          {'   '}
+          <Check ok={fb.meaningOk} label="nghĩa" />
+          {'   '}
+          <Check ok={fb.tenseOk} label={axis} />
+        </Text>
+        <Text>{fb.comment}</Text>
+        {fb.tenseNote ? <Text color={BRAND}>⏱ {fb.tenseNote}</Text> : null}
+        {fb.fixes?.length ? (
+          <Box flexDirection="column" marginTop={1}>
+            {fb.fixes.map((f) => (
+              <Text key={`${f.wrong}→${f.right}`}>
+                <Text color={BAD} strikethrough>
+                  {f.wrong}
+                </Text>
+                <Text color={MUTED}> → </Text>
+                <Text color={BRAND}>{f.right}</Text>
+                {f.why ? <Text color={MUTED}> · {f.why}</Text> : null}
               </Text>
-              <Text color={MUTED}> → </Text>
-              <Text color={BRAND}>{f.right}</Text>
-              {f.why ? <Text color={MUTED}> · {f.why}</Text> : null}
-            </Text>
+            ))}
+          </Box>
+        ) : null}
+        {fb.styleNote && !lean ? <Text color={MUTED}>· {fb.styleNote}</Text> : null}
+      </Box>
+      {alts.length ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Box marginLeft={2}>
+            <Text color={MUTED}>cách nói khác</Text>
+          </Box>
+          {alts.map((x) => (
+            <Hang key={x} mark={<Text color={WARM}>≈ </Text>}>
+              {x}
+            </Hang>
           ))}
         </Box>
       ) : null}
-      <Box flexDirection="column" marginTop={1}>
-        <Hang mark={<Text color={BRAND}>✓ </Text>}>
-          <Text bold>{right}</Text>
-        </Hang>
-        {(lean ? [] : (fb.preps ?? [])).map((p) => (
-          <Hang key={p.phrase} indent={2} mark={<Text> </Text>}>
-            <Text color={WARM}>{p.phrase}</Text>
-            <Text color={MUTED}> · {p.why}</Text>
-          </Hang>
-        ))}
-        {alts.length ? (
-          <>
-            <Text color={MUTED}>cách nói khác</Text>
-            {alts.map((x) => (
-              <Hang key={x} mark={<Text color={WARM}>≈ </Text>}>
-                {x}
-              </Hang>
-            ))}
-          </>
-        ) : null}
-      </Box>
-      {fb.styleNote && !lean ? <Text color={MUTED}>· {fb.styleNote}</Text> : null}
-      {lean ? <Text color={MUTED}>… thu gọn cho vừa màn hình (kéo giãn cửa sổ để xem đủ)</Text> : null}
+      {lean ? (
+        <Box marginLeft={2}>
+          <Text color={MUTED}>… thu gọn cho vừa màn hình (kéo giãn cửa sổ để xem đủ)</Text>
+        </Box>
+      ) : null}
     </Box>
   );
 }
@@ -951,7 +951,7 @@ function feedbackRows(fb: Feedback, sample: string, w: number, lean = false): nu
   if (lean) return n + 1;
   for (const p of fb.preps ?? []) n += rowsOf(`${p.phrase} · ${p.why}`, w - 2);
   const alts = (fb.natural ?? []).length + (norm(sample) !== norm(right) ? 1 : 0);
-  if (alts) n += 1 + alts * rowsOf(right, w - 2);
+  if (alts) n += 2 + alts * rowsOf(right, w - 2);
   if (fb.styleNote) n += 1;
   return n;
 }
