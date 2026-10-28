@@ -293,6 +293,58 @@ function VocabHint({ vocab, index }: { vocab: Vocab | 'loading' | { error: strin
   );
 }
 
+/** Bảng phím tắt đầy đủ (^K) — chia nhóm cho dễ nhớ. */
+function KeysHelp({ frame }: { frame: string }) {
+  const groups: [string, [string, string][]][] = [
+    [
+      'Luyện',
+      [
+        ['⏎', 'chấm · câu tiếp · đoạn mới'],
+        ['↑↓', 'đổi câu'],
+        ['tab', 'gợi ý: cấu trúc → từ vựng → tắt'],
+        ['^R', 'xem câu mẫu'],
+      ],
+    ],
+    [
+      'Đề',
+      [
+        ['^N', 'đề khác'],
+        ['^L', 'lịch sử'],
+        ['^X', 'luyện lại từ đầu (khi hết kho)'],
+      ],
+    ],
+    [
+      'Giao diện',
+      [
+        ['^T', `màu khung (${frame})`],
+        ['esc', 'đóng gợi ý · về menu'],
+        ['^C', 'lưu & thoát'],
+      ],
+    ],
+    ['Sửa dòng', [['←→ ^A ^E', 'di chuyển'], ['^U ^W', 'xoá dòng · xoá từ']]],
+  ];
+  return (
+    <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={FAINT} paddingX={1}>
+      {groups.map(([title, items]) => (
+        <Box key={title}>
+          <Box width={11} flexShrink={0}>
+            <Text color={MUTED}>{title}</Text>
+          </Box>
+          <Box flexWrap="wrap" flexGrow={1}>
+            {items.map(([k, label]) => (
+              <Text key={k}>
+                <Text color={WARM}>{k}</Text>
+                <Text> {label}   </Text>
+              </Text>
+            ))}
+          </Box>
+        </Box>
+      ))}
+      <Text color={MUTED}>^K hoặc esc để đóng</Text>
+    </Box>
+  );
+}
+
 function Keys({ items }: { items: [string, string][] }) {
   return (
     <Box marginTop={1} flexWrap="wrap">
@@ -918,6 +970,8 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const [view, setView] = useState<'drill' | 'history'>('drill');
   const [frameIdx, setFrameIdx] = useState(() => Math.max(0, FRAMES.findIndex((f) => f.name === cfg.frame)));
   const frame = FRAMES[frameIdx] ?? FRAMES[0]!;
+  /** ^K: bảng phím tắt đầy đủ; mặc định chỉ một dòng gợi ý theo tình huống. */
+  const [showKeys, setShowKeys] = useState(false);
   /** Câu vừa chấm xong → chạy hiệu ứng đúng/sai; key đổi mỗi lần chấm để chạy lại từ đầu. */
   const [burst, setBurst] = useState<{ i: number; key: number } | null>(null);
   const streak = useRef(0);
@@ -1120,6 +1174,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     if (key.ctrl && (input === 'c' || input === 'd')) return void quit();
     if (view !== 'drill') return;
     if (key.ctrl && input === 'l') return setView('history');
+    if (key.ctrl && input === 'k') return setShowKeys((v) => !v);
     if (key.ctrl && input === 't') {
       const next = (frameIdx + 1) % FRAMES.length;
       setFrameIdx(next);
@@ -1128,6 +1183,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     }
     // Esc: đang mở gợi ý / câu mẫu thì đóng; không mở gì thì lưu bài rồi về menu — không bao giờ thoát.
     if (key.escape) {
+      if (showKeys) return setShowKeys(false);
       if (hint || reveal) {
         setHint(0);
         setReveal(false);
@@ -1197,6 +1253,28 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const done = feedbacks.filter(Boolean).length;
   const right = feedbacks.filter((f) => f?.meaningOk && f?.tenseOk).length;
   const grading = pending.filter(Boolean).length;
+  // Một dòng phím theo tình huống — đủ dùng lúc đó; ^K mở bảng đầy đủ.
+  const curFb = feedbacks[cur];
+  const quickKeys: [string, string][] = [
+    ...((hint || reveal
+      ? [['esc', 'đóng gợi ý']]
+      : allGraded && !answerChanged(cur)
+        ? [
+            ['⏎', 'đoạn mới'],
+            ['^L', 'lịch sử'],
+          ]
+        : curFb && !answerChanged(cur)
+          ? [
+              ['⏎', 'câu tiếp'],
+              ['↑↓', 'đổi câu'],
+            ]
+          : [
+              ['⏎', curFb ? 'chấm lại' : 'chấm'],
+              ['tab', 'gợi ý'],
+              ['↑↓', 'đổi câu'],
+            ]) as [string, string][]),
+    ['^K', 'phím tắt'],
+  ];
 
   // ── Khung nhìn: ước lượng chiều cao từng câu; không vừa màn hình thì chỉ hiện các câu
   // quanh câu đang làm, phần còn lại thu thành một dòng "↑ / ↓ n câu".
@@ -1232,7 +1310,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     (wrapped ? 2 : 0) +
     (busy ? 1 : 0) +
     (error ? rowsOf(error, W) : 0) +
-    rowsOf('⏎ chấm / câu tiếp   ↑↓ đổi câu   tab gợi ý ×2   ^R xem mẫu   ^N đề khác   ^L lịch sử   ^T màu khung (hồng)   esc đóng gợi ý / menu   ^C lưu & thoát', W) +
+    (showKeys ? 11 : 2) +
     2;
   let from = 0;
   let to = steps.length - 1;
@@ -1422,19 +1500,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
         </Text>
       ) : null}
       {error ? <Text color={BAD}>✗ {error}</Text> : null}
-      <Keys
-        items={[
-          ['⏎', 'chấm / câu tiếp'],
-          ['↑↓', 'đổi câu'],
-          ['tab', 'gợi ý ×2'],
-          ['^R', 'xem mẫu'],
-          ['^N', 'đề khác'],
-          ['^L', 'lịch sử'],
-          ['^T', `màu khung (${frame.name})`],
-          ['esc', 'đóng gợi ý / menu'],
-          ['^C', 'lưu & thoát'],
-        ]}
-      />
+      {showKeys ? <KeysHelp frame={frame.name} /> : <Keys items={quickKeys} />}
     </Box>
   );
 }
