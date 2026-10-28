@@ -1,7 +1,7 @@
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Text, Transform, useApp, useInput } from 'ink';
 import Gradient from 'ink-gradient';
 import Spinner from 'ink-spinner';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
   type Client,
   type Config,
@@ -67,6 +67,24 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
       <Text inverse>{shown[cur] ?? ' '}</Text>
       {shown.slice(cur + 1)}
     </Text>
+  );
+}
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: bỏ qua mã màu ANSI ở đầu dòng
+const LEAD_SPACE = /^((?:\x1b\[[0-9;]*m)*) /;
+
+/** Dòng hai cột: dấu/số cố định bên trái, chữ bên phải — câu dài xuống dòng vẫn thẳng hàng với đầu câu. */
+function Hang({ mark, indent = 0, children }: { mark: ReactNode; indent?: number; children: ReactNode }) {
+  return (
+    <Box marginLeft={indent}>
+      <Box flexShrink={0}>{mark}</Box>
+      <Box flexGrow={1} flexShrink={1}>
+        {/* Ink ngắt dòng với trim:false → ngắt đúng chỗ dấu cách thì dòng sau dư 1 khoảng trắng đầu; bỏ đi. */}
+        <Transform transform={(line) => line.replace(LEAD_SPACE, '$1')}>
+          <Text>{children}</Text>
+        </Transform>
+      </Box>
+    </Box>
   );
 }
 
@@ -151,24 +169,22 @@ function FeedbackView({ fb, sample, axis }: { fb: Feedback; sample: string; axis
         </Box>
       ) : null}
       <Box flexDirection="column" marginTop={1}>
-        <Text>
-          <Text color={BRAND}>✓ </Text>
+        <Hang mark={<Text color={BRAND}>✓ </Text>}>
           <Text bold>{right}</Text>
-        </Text>
+        </Hang>
         {fb.preps?.map((p) => (
-          <Text key={p.phrase}>
-            <Text color={WARM}>  {p.phrase}</Text>
+          <Hang key={p.phrase} indent={2} mark={<Text> </Text>}>
+            <Text color={WARM}>{p.phrase}</Text>
             <Text color={MUTED}> · {p.why}</Text>
-          </Text>
+          </Hang>
         ))}
         {alts.length ? (
           <>
             <Text color={MUTED}>cách nói khác</Text>
             {alts.map((x) => (
-              <Text key={x}>
-                <Text color={WARM}>≈ </Text>
+              <Hang key={x} mark={<Text color={WARM}>≈ </Text>}>
                 {x}
-              </Text>
+              </Hang>
             ))}
           </>
         ) : null}
@@ -187,15 +203,13 @@ function GradedLines({ answer, fb, sample }: { answer: string; fb: Feedback; sam
   const perfect = ok && norm(right) === norm(answer);
   return (
     <>
-      <Text>
-        <Text color={toneOf(fb)}>{`    ${ok ? '✓' : '✗'} `}</Text>
-        <Text>{answer}</Text>
-      </Text>
+      <Hang indent={4} mark={<Text color={toneOf(fb)}>{ok ? '✓ ' : '✗ '}</Text>}>
+        {answer}
+      </Hang>
       {perfect ? null : (
-        <Text>
-          <Text color={BRAND}>{'    → '}</Text>
+        <Hang indent={4} mark={<Text color={BRAND}>→ </Text>}>
           <Text color={BRAND}>{right}</Text>
-        </Text>
+        </Hang>
       )}
     </>
   );
@@ -1039,36 +1053,37 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
               const mark = fb ? (fb.meaningOk && fb.tenseOk ? '✓' : '✗') : active ? '▸' : '·';
               return (
                 <Box key={`${i}-${l.vi}`} flexDirection="column" marginBottom={active ? 1 : 0}>
-                  <Text>
-                    <Text color={fb ? toneOf(fb) : active ? WARM : MUTED}>{mark} </Text>
-                    <Text color={MUTED}>{String(i + 1).padStart(2, '0')} </Text>
+                  <Hang
+                    mark={
+                      <Text>
+                        <Text color={fb ? toneOf(fb) : active ? WARM : MUTED}>{mark} </Text>
+                        <Text color={MUTED}>{String(i + 1).padStart(2, '0')} </Text>
+                      </Text>
+                    }
+                  >
                     <Text bold={active} dimColor={!active && !fb}>
                       {l.vi}
                     </Text>
                     {!active && fb ? <Text color={toneOf(fb)}> {fb.score}/10</Text> : null}
-                  </Text>
+                  </Hang>
                   {active ? (
                     <>
-                      <Text>
-                        <Text color={WARM}>{'    › '}</Text>
-                        {busy ? <Text>{answers[i]}</Text> : <AnswerInput value={answers[i] ?? ''} onChange={setAnswer} />}
-                      </Text>
+                      <Hang indent={4} mark={<Text color={WARM}>› </Text>}>
+                        {busy ? answers[i] : <AnswerInput value={answers[i] ?? ''} onChange={setAnswer} />}
+                      </Hang>
                       {hint ? (
                         <Box flexDirection="column" marginLeft={4}>
-                          <Text color={WARM}>
-                            💡 {l.hint}
+                          <Hang mark={<Text>💡 </Text>}>
+                            <Text color={WARM}>{l.hint}</Text>
                             {l.patterns?.length ? <Text color={MUTED}> · {l.patterns.join(' · ')}</Text> : null}
-                          </Text>
+                          </Hang>
                           {hint === 2 ? <VocabHint vocab={vocab} index={i} /> : null}
                         </Box>
                       ) : null}
                       {reveal && !fb ? (
-                        <Box marginLeft={4}>
-                          <Text>
-                            <Text color={MUTED}>◆ mẫu </Text>
-                            <Text color={BRAND}>{l.answer}</Text>
-                          </Text>
-                        </Box>
+                        <Hang indent={4} mark={<Text color={MUTED}>◆ mẫu </Text>}>
+                          <Text color={BRAND}>{l.answer}</Text>
+                        </Hang>
                       ) : null}
                       {fb && burst?.i === i ? (
                         <Verdict key={burst.key} fb={fb} streak={streak.current} onEnd={endBurst} />
@@ -1089,7 +1104,9 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                   ) : fb ? (
                     <GradedLines answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
                   ) : answers[i] ? (
-                    <Text color={MUTED}>{`    › ${answers[i]}`}</Text>
+                    <Hang indent={4} mark={<Text color={MUTED}>› </Text>}>
+                      <Text color={MUTED}>{answers[i]}</Text>
+                    </Hang>
                   ) : null}
                 </Box>
               );
