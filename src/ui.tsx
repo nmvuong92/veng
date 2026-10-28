@@ -198,10 +198,13 @@ function FeedbackView({
   sample,
   axis,
   lean = false,
+  width,
 }: {
   fb: Feedback;
   sample: string;
   axis: string;
+  /** Bề rộng chữ trong khung câu — để tự ngắt dòng câu đã đánh dấu. */
+  width: number;
   /** Màn hình thấp: bỏ cách nói khác / giới từ / lưu ý vặt để cả khối vừa màn hình. */
   lean?: boolean;
 }) {
@@ -210,9 +213,14 @@ function FeedbackView({
     ...(norm(sample) !== norm(right) ? [sample] : []),
     ...(fb.natural ?? []),
   ].filter((x, i, arr) => x && norm(x) !== norm(right) && arr.findIndex((y) => norm(y) === norm(x)) === i);
-  // Câu đúng nằm ngay dưới câu đã nhập (✓ thẳng cột với ›) để so từng chữ; nhận xét xuống dưới.
+  const marked = fb.marked ? parseCritic(fb.marked) : null;
+  const numbered = marked?.fixes.length ? marked.fixes : null;
+  // Câu đã nhập được AI đánh dấu (✎) rồi câu đúng (✓), thẳng cột với › để so từng chữ; nhận xét xuống dưới.
   return (
     <Box flexDirection="column" marginLeft={3}>
+      {numbered && marked ? (
+        <MarkedAnswer segs={marked.segs} width={width - 5} mark={<Text color={WARM}>✎ </Text>} />
+      ) : null}
       <Hang mark={<Text color={BRAND}>✓ </Text>} bold color={BRAND}>
         {right}
       </Hang>
@@ -231,7 +239,11 @@ function FeedbackView({
         </Text>
         <Text>{fb.comment}</Text>
         {fb.tenseNote ? <Text color={BRAND}>⏱ {fb.tenseNote}</Text> : null}
-        {fb.fixes?.length ? (
+        {numbered ? (
+          <Box marginTop={1}>
+            <FixList fixes={numbered} />
+          </Box>
+        ) : fb.fixes?.length ? (
           <Box flexDirection="column" marginTop={1}>
             {fb.fixes.map((f) => (
               <Text key={`${f.wrong}→${f.right}`}>
@@ -271,15 +283,155 @@ function FeedbackView({
 const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9']+/g, ' ').trim();
 
 /** Câu đã chấm (khi không đang làm): dòng 1 câu mình viết + ✓/✗, dòng 2 câu đúng — đúng hẳn thì bỏ. */
-function GradedLines({ answer, fb, sample, dim = false }: { answer: string; fb: Feedback; sample: string; dim?: boolean }) {
+// ── CriticMarkup: AI đánh dấu lỗi ngay trên câu người học ─────────────────────
+// {~~sai~>đúng~~} thay · {--thừa--} xoá · {++thiếu++} thêm · {>>lý do<<} ghi chú ngay sau.
+const CRITIC = /\{(~~|--|\+\+)([\s\S]*?)(?:~~|--|\+\+)\}(?:\{>>([\s\S]*?)<<\})?/g;
+const SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+const sup = (n: number) => [...String(n)].map((d) => SUP[Number(d)]).join('');
+
+/** trail: AI để dấu cách nằm trong dấu ({++the ++}) — giữ lại để không dính chữ sau. */
+type Fix = { n: number; old: string; neu: string; why: string; trail: boolean };
+type Seg = { s: string; fix?: Fix };
+
+/** Tách bản đánh dấu thành đoạn chữ thường + chỗ sửa (đánh số ¹²³…). Chỗ "sửa" mà như cũ thì coi là chữ thường. */
+function parseCritic(marked: string): { segs: Seg[]; fixes: Fix[] } {
+  const segs: Seg[] = [];
+  const fixes: Fix[] = [];
+  let last = 0;
+  for (const m of marked.matchAll(CRITIC)) {
+    if (m.index > last) segs.push({ s: marked.slice(last, m.index) });
+    const [op, body = '', why = ''] = [m[1], m[2], m[3]];
+    const [old, neu] = op === '~~' ? [body.split('~>')[0] ?? '', body.split('~>')[1] ?? ''] : op === '--' ? [body, ''] : ['', body];
+    if (old.trim() === neu.trim()) segs.push({ s: old });
+    else {
+      const fix = {
+        n: fixes.length + 1,
+        old: old.trim(),
+        neu: neu.trim(),
+        why: why.trim(),
+        trail: /\s$/.test(op === '--' ? old : neu || old),
+      };
+      fixes.push(fix);
+      segs.push({ s: old, fix });
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < marked.length) segs.push({ s: marked.slice(last) });
+  return { segs, fixes };
+}
+
+type Word = { s: string; c?: string; strike?: boolean; bold?: boolean };
+
+/**
+ * Câu đã đánh dấu → các dòng đã ngắt sẵn theo bề rộng w. Tự ngắt theo từ (không để Ink ngắt)
+ * vì Ink ngắt sau khi tô màu thì đoạn tô màu vắt qua dòng sẽ mất màu ở dòng sau.
+ */
+function diffLines(segs: Seg[], w: number, plain?: string): Word[][] {
+  const words: Word[] = [];
+  const push = (text: string, style: Omit<Word, 's'>) => {
+    for (const p of text.split(/(\s+)/)) if (p) words.push({ s: p, ...style });
+  };
+  for (const g of segs) {
+    if (!g.fix) push(g.s, plain ? { c: plain } : {});
+    else {
+      if (g.fix.old) push(g.fix.old, { c: BAD, strike: true });
+      if (g.fix.old && g.fix.neu) words.push({ s: ' ' });
+      if (g.fix.neu) push(g.fix.neu, { c: BRAND, bold: true });
+      words.push({ s: sup(g.fix.n), c: WARM });
+      if (g.fix.trail) words.push({ s: ' ' });
+    }
+  }
+  const lines: Word[][] = [[]];
+  let len = 0;
+  for (const wd of words) {
+    const space = /^\s+$/.test(wd.s);
+    if (!space && len + wd.s.length > w && len > 0) {
+      lines.push([]);
+      len = 0;
+    }
+    if (space && len === 0) continue;
+    lines[lines.length - 1]?.push(wd);
+    len += wd.s.length;
+  }
+  // Dấu cách cuối dòng làm dòng dài hơn w 1 ký tự → Ink ngắt thêm một dòng trống.
+  for (const ln of lines) while (ln.length && /^\s+$/.test(ln[ln.length - 1]?.s ?? '')) ln.pop();
+  return lines;
+}
+
+/** Câu người học với lỗi gạch đỏ + chữ đúng xanh + số ¹²³ trỏ xuống phần phân tích. */
+function MarkedAnswer({ segs, width, mark, dim = false }: { segs: Seg[]; width: number; mark: ReactNode; dim?: boolean }) {
+  const lines = diffLines(segs, Math.max(20, width), dim ? MUTED : undefined);
+  return (
+    <Box>
+      <Box flexShrink={0}>{mark}</Box>
+      <Box flexDirection="column">
+        {lines.map((ln, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: dòng đã ngắt không có id riêng
+          <Text key={i}>
+            {ln.map((wd, j) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: từ trong dòng không có id riêng
+              <Text key={j} color={wd.c} strikethrough={wd.strike} bold={wd.bold}>
+                {wd.s}
+              </Text>
+            ))}
+          </Text>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
+/** Phân tích theo số: ¹ sai → đúng · vì sao. */
+function FixList({ fixes }: { fixes: Fix[] }) {
+  return (
+    <Box flexDirection="column">
+      {fixes.map((f) => (
+        <Hang key={f.n} mark={<Text color={WARM}>{sup(f.n)} </Text>}>
+          {f.old ? (
+            <Text color={BAD} strikethrough>
+              {f.old}
+            </Text>
+          ) : (
+            <Text color={MUTED}>(thiếu)</Text>
+          )}
+          <Text color={MUTED}> → </Text>
+          {f.neu ? <Text color={BRAND}>{f.neu}</Text> : <Text color={MUTED}>(bỏ)</Text>}
+          {f.why ? <Text color={MUTED}> · {f.why}</Text> : null}
+        </Hang>
+      ))}
+    </Box>
+  );
+}
+
+function GradedLines({
+  answer,
+  fb,
+  sample,
+  dim = false,
+  width,
+}: {
+  answer: string;
+  fb: Feedback;
+  sample: string;
+  dim?: boolean;
+  width: number;
+}) {
   const ok = fb.meaningOk && fb.tenseOk;
   const right = fb.corrected || sample;
   const perfect = ok && norm(right) === norm(answer);
+  const marked = fb.marked ? parseCritic(fb.marked) : null;
+  const mark = <Text color={toneOf(fb)}>{ok ? '✓ ' : '✗ '}</Text>;
   return (
     <>
-      <Hang indent={3} dim={dim} mark={<Text color={toneOf(fb)}>{ok ? '✓ ' : '✗ '}</Text>}>
-        {answer}
-      </Hang>
+      {marked?.fixes.length ? (
+        <Box marginLeft={3}>
+          <MarkedAnswer segs={marked.segs} width={width - 5} dim={dim} mark={mark} />
+        </Box>
+      ) : (
+        <Hang indent={3} dim={dim} mark={mark}>
+          {answer}
+        </Hang>
+      )}
       {perfect ? null : (
         <Hang indent={3} dim={dim} color={BRAND} mark={<Text color={BRAND}>→ </Text>}>
           {right}
@@ -970,6 +1122,7 @@ function useTermSize() {
 function feedbackRows(fb: Feedback, sample: string, w: number, lean = false): number {
   const right = fb.corrected || sample;
   let n = 1 + rowsOf(fb.comment, w);
+  if (fb.marked) n += rowsOf(fb.marked, w - 5); // dòng ✎ (chuỗi có cả mã đánh dấu → ước dư, an toàn)
   if (fb.tenseNote) n += rowsOf(fb.tenseNote, w);
   if (fb.fixes?.length) n += 1 + fb.fixes.reduce((k, f) => k + rowsOf(`${f.wrong} → ${f.right} · ${f.why}`, w), 0);
   n += 1 + rowsOf(right, w - 2);
@@ -1455,7 +1608,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       {fb && burst?.i === i ? (
                         <Verdict key={burst.key} fb={fb} streak={streak.current} onEnd={endBurst} />
                       ) : fb ? (
-                        <FeedbackView fb={fb} sample={l.answer} axis={kind.axis} lean={lean} />
+                        <FeedbackView fb={fb} sample={l.answer} axis={kind.axis} lean={lean} width={W} />
                       ) : null}
                       {/* Mạch hỏi / ráp câu / be: câu đáp của người kia, như web — hiện khi đã chấm hoặc xem mẫu. */}
                       {l.reply && (fb || reveal) ? (
@@ -1473,7 +1626,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       {burst?.i === i ? (
                         <Verdict key={burst.key} compact fb={fb} streak={streak.current} onEnd={endBurst} />
                       ) : null}
-                      <GradedLines dim answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
+                      <GradedLines dim width={W} answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
                     </>
                   ) : answers[i] ? (
                     <Hang indent={3} dim color={MUTED} mark={<Text color={MUTED}>› </Text>}>

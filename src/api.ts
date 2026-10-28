@@ -101,6 +101,8 @@ export interface Feedback {
   styleNote: string;
   fixes: { wrong: string; right: string; why: string }[];
   natural: string[];
+  /** Bài người học đánh dấu lỗi bằng CriticMarkup ({~~sai~>đúng~~}{>>lý do<<}…) — server cũ không có. */
+  marked?: string;
   /** Giới từ trong câu đúng + vì sao — server cũ / kết quả cũ không có. */
   preps?: { phrase: string; why: string }[];
 }
