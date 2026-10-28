@@ -24,6 +24,8 @@ const WARM = '#d6a23a';
 const BAD = '#e0645c';
 /** Chữ phụ. Không dùng MUTED của Ink (ANSI bright black) — trên nền tối gần như chìm. */
 const MUTED = '#9aa3ad';
+/** Vạch mờ bên trái của các câu không đang làm. */
+const FAINT = '#4a5260';
 
 /** Ô nhập một dòng, phím kiểu readline. Tự viết vì ink-text-input nuốt Ctrl+chữ thành ký tự. */
 function useLineEditor(value: string, onChange: (v: string) => void, active: boolean, mask = false) {
@@ -87,21 +89,26 @@ function Hang({
   mark,
   indent = 0,
   trim = true,
+  dim = false,
   children,
 }: {
   mark: ReactNode;
   indent?: number;
+  /** Câu không đang làm: chữ "faint" (terminal không có opacity). */
+  dim?: boolean;
   /** Ô nhập liệu phải để false: con trỏ là một dấu cách tô ngược màu, bỏ đi là mất con trỏ. */
   trim?: boolean;
   children: ReactNode;
 }) {
   return (
     <Box marginLeft={indent}>
-      <Box flexShrink={0}>{mark}</Box>
+      <Box flexShrink={0}>
+        <Text dimColor={dim}>{mark}</Text>
+      </Box>
       <Box flexGrow={1} flexShrink={1}>
         {/* Ink ngắt dòng với trim:false → ngắt đúng chỗ dấu cách thì dòng sau dư 1 khoảng trắng đầu; bỏ đi. */}
         <Transform transform={(line, i) => (trim && i > 0 ? line.replace(LEAD_SPACE, '$1') : line)}>
-          <Text>{children}</Text>
+          <Text dimColor={dim}>{children}</Text>
         </Transform>
       </Box>
     </Box>
@@ -168,7 +175,7 @@ function FeedbackView({
   return (
     <Box
       flexDirection="column"
-      marginLeft={4}
+      marginLeft={3}
       paddingLeft={1}
       borderStyle="bold"
       borderTop={false}
@@ -229,17 +236,17 @@ function FeedbackView({
 const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9']+/g, ' ').trim();
 
 /** Câu đã chấm (khi không đang làm): dòng 1 câu mình viết + ✓/✗, dòng 2 câu đúng — đúng hẳn thì bỏ. */
-function GradedLines({ answer, fb, sample }: { answer: string; fb: Feedback; sample: string }) {
+function GradedLines({ answer, fb, sample, dim = false }: { answer: string; fb: Feedback; sample: string; dim?: boolean }) {
   const ok = fb.meaningOk && fb.tenseOk;
   const right = fb.corrected || sample;
   const perfect = ok && norm(right) === norm(answer);
   return (
     <>
-      <Hang indent={4} mark={<Text color={toneOf(fb)}>{ok ? '✓ ' : '✗ '}</Text>}>
+      <Hang indent={3} dim={dim} mark={<Text color={toneOf(fb)}>{ok ? '✓ ' : '✗ '}</Text>}>
         {answer}
       </Hang>
       {perfect ? null : (
-        <Hang indent={4} mark={<Text color={BRAND}>→ </Text>}>
+        <Hang indent={3} dim={dim} mark={<Text color={BRAND}>→ </Text>}>
           <Text color={BRAND}>{right}</Text>
         </Hang>
       )}
@@ -476,7 +483,7 @@ function Verdict({
           ).join(' ')
         : '';
     return (
-      <Box marginLeft={4}>
+      <Box marginLeft={3}>
         <Text>
           {' '.repeat(Math.max(0, 2 + shake))}
           <Text bold inverse color={color}>
@@ -494,7 +501,7 @@ function Verdict({
   }
 
   return (
-    <Box flexDirection="column" marginLeft={4}>
+    <Box flexDirection="column" marginLeft={3}>
       <Text color={WARM}>{sparkRow(0)}</Text>
       {bounce ? null : <Text> </Text>}
       <Text>
@@ -1176,7 +1183,8 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   // ── Khung nhìn: ước lượng chiều cao từng câu; không vừa màn hình thì chỉ hiện các câu
   // quanh câu đang làm, phần còn lại thu thành một dòng "↑ / ↓ n câu".
   // ponytail: ước lượng theo số ký tự (không đo thật) — lệch vài dòng thì còn biên an toàn.
-  const W = term.cols - 2;
+  // trừ viền + lề trong của khung câu
+  const W = term.cols - 6;
   const lineRows = (i: number, lean = false) => {
     const l = steps[i];
     const fb = feedbacks[i];
@@ -1190,7 +1198,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
       } else if (answers[i]) n += rowsOf(answers[i] ?? '', W - 6);
       return n;
     }
-    n += 1 + rowsOf(answers[i] || ' ', W - 6);
+    n += 2 + rowsOf(answers[i] || ' ', W - 6); // 2 = viền trên + dưới của khung câu đang làm
     if (pending[i]) n += 1;
     if (hint) n += rowsOf(`${l.hint} · ${l.patterns?.join(' · ')}`, W - 7) + (hint === 2 ? 6 : 0);
     if (reveal && !fb) n += rowsOf(l.answer, W - 11);
@@ -1266,8 +1274,22 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
               const active = i === cur;
               const mark = fb ? (fb.meaningOk && fb.tenseOk ? '✓' : '✗') : active ? '▸' : '·';
               return (
-                <Box key={`${i}-${l.vi}`} flexDirection="column" marginBottom={active ? 1 : 0}>
+                // Câu đang làm: khung bo tròn sáng; câu khác: chỉ vạch mờ bên trái, chữ faint.
+                // key đổi theo active: Ink không trả bề dày viền về 0 khi borderBottom true → false
+                // (còn giữ chỗ 1 dòng trống), nên dựng lại Box thay vì đổi prop.
+                <Box
+                  key={`${i}-${l.vi}-${active ? 'on' : 'off'}`}
+                  flexDirection="column"
+                  borderStyle={active ? 'round' : 'single'}
+                  borderColor={active ? WARM : FAINT}
+                  borderTop={active}
+                  borderRight={active}
+                  borderBottom={active}
+                  paddingLeft={1}
+                  paddingRight={active ? 1 : 0}
+                >
                   <Hang
+                    dim={!active}
                     mark={
                       <Text>
                         {pending[i] ? (
@@ -1281,26 +1303,24 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       </Text>
                     }
                   >
-                    <Text bold={active} dimColor={!active && !fb}>
-                      {l.vi}
-                    </Text>
+                    <Text bold={active}>{l.vi}</Text>
                     {!active && fb ? <Text color={toneOf(fb)}> {fb.score}/10</Text> : null}
                     {pending[i] && !active ? <Text color={MUTED}> · đang chấm…</Text> : null}
                   </Hang>
                   {active ? (
                     <>
-                      <Hang indent={4} trim={false} mark={<Text color={WARM}>› </Text>}>
+                      <Hang indent={3} trim={false} mark={<Text color={WARM}>› </Text>}>
                         {busy ? answers[i] : <AnswerInput value={answers[i] ?? ''} onChange={setAnswer} />}
                       </Hang>
                       {pending[i] ? (
-                        <Box marginLeft={6}>
+                        <Box marginLeft={5}>
                           <Text color={BRAND}>
                             <Spinner type="dots" /> AI đang chấm câu này…
                           </Text>
                         </Box>
                       ) : null}
                       {hint ? (
-                        <Box flexDirection="column" marginLeft={4}>
+                        <Box flexDirection="column" marginLeft={3}>
                           <Hang mark={<Text>💡 </Text>}>
                             <Text color={WARM}>{l.hint}</Text>
                             {l.patterns?.length ? <Text color={MUTED}> · {l.patterns.join(' · ')}</Text> : null}
@@ -1309,7 +1329,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                         </Box>
                       ) : null}
                       {reveal && !fb ? (
-                        <Hang indent={4} mark={<Text color={MUTED}>◆ mẫu </Text>}>
+                        <Hang indent={3} mark={<Text color={MUTED}>◆ mẫu </Text>}>
                           <Text color={BRAND}>{l.answer}</Text>
                         </Hang>
                       ) : null}
@@ -1320,7 +1340,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       ) : null}
                       {/* Mạch hỏi / ráp câu / be: câu đáp của người kia, như web — hiện khi đã chấm hoặc xem mẫu. */}
                       {l.reply && (fb || reveal) ? (
-                        <Box flexDirection="column" marginLeft={4} marginTop={1}>
+                        <Box flexDirection="column" marginLeft={3} marginTop={1}>
                           <Text>
                             <Text color={MUTED}>↩ người kia đáp </Text>
                             {l.reply}
@@ -1334,10 +1354,10 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       {burst?.i === i ? (
                         <Verdict key={burst.key} compact fb={fb} streak={streak.current} onEnd={endBurst} />
                       ) : null}
-                      <GradedLines answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
+                      <GradedLines dim answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
                     </>
                   ) : answers[i] ? (
-                    <Hang indent={4} mark={<Text color={MUTED}>› </Text>}>
+                    <Hang indent={3} dim mark={<Text color={MUTED}>› </Text>}>
                       <Text color={MUTED}>{answers[i]}</Text>
                     </Hang>
                   ) : null}
