@@ -568,6 +568,16 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                         </Box>
                       ) : null}
                       {fb ? <FeedbackView fb={fb} sample={l.answer} axis={kind.axis} /> : null}
+                      {/* Mạch hỏi / ráp câu / be: câu đáp của người kia, như web — hiện khi đã chấm hoặc xem mẫu. */}
+                      {l.reply && (fb || reveal) ? (
+                        <Box flexDirection="column" marginLeft={4} marginTop={1}>
+                          <Text>
+                            <Text color="gray">↩ người kia đáp </Text>
+                            {l.reply}
+                          </Text>
+                          {l.replyVi ? <Text color="gray">{`                ${l.replyVi}`}</Text> : null}
+                        </Box>
+                      ) : null}
                     </>
                   ) : fb ? (
                     <GradedLines answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />

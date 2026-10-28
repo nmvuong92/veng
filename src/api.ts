@@ -72,6 +72,9 @@ export interface DrillLine {
   hint: string;
   patterns: string[];
   answer: string;
+  /** Câu đáp của người kia (mạch hỏi, ráp câu, be) — hiện sau khi chấm, như web. */
+  reply?: string;
+  replyVi?: string;
 }
 export interface Drill {
   vi: string;
