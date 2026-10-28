@@ -8,11 +8,14 @@ import {
   client,
   type Drill,
   type Feedback,
+  KINDS,
+  type Kind,
   linesOf,
   type Stats,
   type Summary,
   type Vocab,
   saveConfig,
+  saveLastKind,
 } from './api.js';
 
 const BRAND = '#3fa796';
@@ -86,17 +89,17 @@ const Check = ({ ok, label }: { ok: boolean; label: string }) => (
   </Text>
 );
 
-function Header({ stats }: { stats: Stats | null }) {
+function Header({ stats, kind }: { stats: Stats | null; kind?: Kind }) {
   return (
     <Box justifyContent="space-between" marginBottom={1}>
       <Text>
         <Gradient colors={[BRAND, WARM]}>▍veng</Gradient>
-        <Text color="gray"> · luyện thì · dịch Việt → Anh, AI chấm</Text>
+        <Text color="gray"> · {kind ? kind.label : 'luyện dịch'} · Việt → Anh, AI chấm</Text>
       </Text>
       {stats ? (
         <Text color="gray">
-          {stats.doneDrills}/{stats.totalDrills} đoạn · ⌀ <Text color={WARM}>{stats.avg}</Text> · đúng
-          thì {stats.tenseOk}/{stats.lines}
+          {stats.doneDrills}/{stats.totalDrills} đoạn · ⌀ <Text color={WARM}>{stats.avg}</Text> · đúng{' '}
+          {kind?.axis} {stats.tenseOk}/{stats.lines}
         </Text>
       ) : null}
     </Box>
@@ -104,7 +107,7 @@ function Header({ stats }: { stats: Stats | null }) {
 }
 
 /** Khối chấm: thanh dọc màu theo kết quả, gọn một cột — điểm, nhận xét, sửa lỗi, câu đúng, cách nói khác. */
-function FeedbackView({ fb, sample }: { fb: Feedback; sample: string }) {
+function FeedbackView({ fb, sample, axis }: { fb: Feedback; sample: string; axis: string }) {
   const right = fb.corrected || sample;
   const alts = [
     ...(norm(sample) !== norm(right) ? [sample] : []),
@@ -126,7 +129,7 @@ function FeedbackView({ fb, sample }: { fb: Feedback; sample: string }) {
         {'   '}
         <Check ok={fb.meaningOk} label="nghĩa" />
         {'   '}
-        <Check ok={fb.tenseOk} label="thì" />
+        <Check ok={fb.tenseOk} label={axis} />
       </Text>
       <Text color="gray">{fb.comment}</Text>
       {fb.tenseNote ? <Text color="gray">⏱ {fb.tenseNote}</Text> : null}
@@ -247,9 +250,50 @@ function AnswerInput({
   return useLineEditor(value, onChange, true);
 }
 
-export function Practice({ cfg }: { cfg: Config }) {
+/** Mở veng: chọn loại luyện (con trỏ sẵn ở loại lần trước) → vào luyện; Esc trong bài → quay lại đây. */
+export function App({ cfg }: { cfg: Config }) {
   const { exit } = useApp();
-  const api = useRef<Client>(client(cfg)).current;
+  const [kind, setKind] = useState<Kind | null>(null);
+  const [cur, setCur] = useState(() => Math.max(0, KINDS.findIndex((k) => k.id === cfg.lastKind)));
+  useInput(
+    (input, key) => {
+      if (key.ctrl && (input === 'c' || input === 'd')) return exit();
+      if (key.upArrow) setCur((c) => (c + KINDS.length - 1) % KINDS.length);
+      if (key.downArrow || key.tab) setCur((c) => (c + 1) % KINDS.length);
+      if (key.return) {
+        saveLastKind(KINDS[cur].id);
+        setKind(KINDS[cur]);
+      }
+    },
+    { isActive: !kind },
+  );
+  if (kind) return <Practice key={kind.id} cfg={cfg} kind={kind} onBack={() => setKind(null)} />;
+  return (
+    <Box flexDirection="column" paddingX={1}>
+      <Header stats={null} />
+      <Text color="gray">Luyện gì hôm nay?</Text>
+      <Box flexDirection="column" marginY={1}>
+        {KINDS.map((k, i) => (
+          <Text key={k.id} color={i === cur ? WARM : undefined} bold={i === cur}>
+            {i === cur ? ' ▸ ' : '   '}
+            {k.label}
+          </Text>
+        ))}
+      </Box>
+      <Keys
+        items={[
+          ['↑↓', 'chọn'],
+          ['⏎', 'vào luyện'],
+          ['^C', 'thoát'],
+        ]}
+      />
+    </Box>
+  );
+}
+
+function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () => void }) {
+  const { exit } = useApp();
+  const api = useRef<Client>(client(cfg, kind.id)).current;
   const [drill, setDrill] = useState<Drill | null>(null);
   const [answers, setAnswers] = useState<string[]>([]);
   const [feedbacks, setFeedbacks] = useState<(Feedback | null)[]>([]);
@@ -407,17 +451,19 @@ export function Practice({ cfg }: { cfg: Config }) {
     setReveal(false);
   };
 
-  async function quit() {
+  async function quit(back = false) {
     if (drill) await api.saveState({ drill, answers, feedbacks }).catch(() => {});
-    exit();
+    back ? onBack() : exit();
   }
 
   useInput((input, key) => {
     if (key.ctrl && (input === 'c' || input === 'd')) return void quit();
-    // Esc chỉ đóng gợi ý / câu mẫu — không thoát, bấm lỡ không mất gì.
+    // Esc: đang mở gợi ý / câu mẫu thì đóng; không mở gì thì lưu bài rồi về menu — không bao giờ thoát.
     if (key.escape) {
-      setHint(0);
-      setReveal(false);
+      if (hint || reveal) {
+        setHint(0);
+        setReveal(false);
+      } else void quit(true);
       return;
     }
     if (busy) return;
@@ -476,7 +522,7 @@ export function Practice({ cfg }: { cfg: Config }) {
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Header stats={stats} />
+      <Header stats={stats} kind={kind} />
       {drill ? (
         <>
           {drill.context ? <Text color="gray">🗣 {drill.context}</Text> : null}
@@ -521,7 +567,7 @@ export function Practice({ cfg }: { cfg: Config }) {
                           </Text>
                         </Box>
                       ) : null}
-                      {fb ? <FeedbackView fb={fb} sample={l.answer} /> : null}
+                      {fb ? <FeedbackView fb={fb} sample={l.answer} axis={kind.axis} /> : null}
                     </>
                   ) : fb ? (
                     <GradedLines answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
@@ -572,7 +618,7 @@ export function Practice({ cfg }: { cfg: Config }) {
           ['tab', 'gợi ý ×2'],
           ['^R', 'xem mẫu'],
           ['^N', 'đề khác'],
-          ['esc', 'đóng gợi ý'],
+          ['esc', 'đóng gợi ý / menu'],
           ['^C', 'lưu & thoát'],
         ]}
       />

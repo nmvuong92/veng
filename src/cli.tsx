@@ -1,15 +1,16 @@
 import { render } from 'ink';
-import { client, clearConfig, CONFIG_PATH, defaultUrl, loadConfig } from './api.js';
-import { Login, Practice } from './ui.js';
+import { client, clearConfig, CONFIG_PATH, defaultUrl, KINDS, loadConfig } from './api.js';
+import { App, Login } from './ui.js';
 
 declare const __VERSION__: string;
 
-const HELP = `veng — luyện thì tiếng Anh ngay trong terminal (dịch Việt → Anh, AI chấm)
+const HELP = `veng — luyện dịch Việt → Anh ngay trong terminal, AI chấm
+  (thì, bị động, câu hỏi, điều kiện, ráp câu, cụm động từ… — cùng kho đề với web)
 
-  veng            luyện tập (làm tiếp bài dở trên web nếu có)
+  veng            chọn loại rồi luyện (làm tiếp bài dở trên web nếu có)
   veng login      nhập API key một lần, lưu ở ${CONFIG_PATH}
   veng logout     xoá key đã lưu
-  veng stats      xem tiến độ
+  veng stats      xem tiến độ từng loại
   veng --version
 
 Biến môi trường: VENG_API_KEY, VENG_API_URL (mặc định ${defaultUrl()})`;
@@ -33,11 +34,17 @@ async function main() {
     return main();
   }
   if (cmd === 'stats') {
-    const s = await client(cfg).stats();
-    console.log(
-      `Vòng ${s.cycle} · ${s.doneDrills}/${s.totalDrills} đoạn · ${s.lines} câu đã chấm · ⌀ ${s.avg}/10\n` +
-        `Tốt ≥8: ${s.good} · Khá 6–7: ${s.fair} · Cần luyện lại <6: ${s.weak} · đúng thì ${s.tenseOk}/${s.lines}`,
-    );
+    const all = await Promise.all(KINDS.map((k) => client(cfg, k.id).stats()));
+    const w = Math.max(...KINDS.map((k) => k.label.length));
+    KINDS.forEach((k, i) => {
+      const s = all[i];
+      console.log(
+        `${k.label.padEnd(w)}  ${`${s.doneDrills}/${s.totalDrills}`.padStart(7)} đoạn  ` +
+          (s.lines
+            ? `${String(s.lines).padStart(4)} câu · ⌀ ${s.avg}/10 · tốt ${s.good} · khá ${s.fair} · yếu ${s.weak} · đúng ${k.axis} ${s.tenseOk}/${s.lines}`
+            : '   chưa luyện'),
+      );
+    });
     return;
   }
   if (cmd) {
@@ -50,7 +57,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  await render(<Practice cfg={cfg} />, { exitOnCtrlC: false }).waitUntilExit();
+  await render(<App cfg={cfg} />, { exitOnCtrlC: false }).waitUntilExit();
 }
 
 main().catch((e) => {

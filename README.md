@@ -1,10 +1,12 @@
 # veng
 
-Luyện **thì tiếng Anh** ngay trong terminal: dịch Việt → Anh từng câu, AI chấm nghĩa và thì.
+Luyện dịch **Việt → Anh** ngay trong terminal, AI chấm từng câu. Có 14 loại: các thì, bị động, đặt câu hỏi,
+câu điều kiện, ráp câu, mốc thời gian, công thức câu, be / being, 32 engine, cụm động từ, collocation,
+tính từ mô tả, động từ trái nghĩa, báo cáo tháng.
 Chạy được trên Ghostty, iTerm2, Terminal.app, WezTerm, Windows Terminal, tmux…
 
-Dùng chung dữ liệu với trang web **English Reflex** (`/tenses?panel=practice`): cùng kho đề, cùng tiến độ
-và lịch sử. Làm dở trên web, mở `veng` là làm tiếp (và ngược lại).
+Dùng chung dữ liệu với trang web **English Reflex** (phần Luyện của từng trang): cùng kho đề,
+cùng tiến độ và lịch sử. Làm dở trên web, mở `veng` là làm tiếp (và ngược lại).
 
 ## Cài
 
@@ -22,9 +24,9 @@ Cập nhật: `brew upgrade veng`.
 
 | Lệnh | |
 |---|---|
-| `veng` | luyện tập |
+| `veng` | chọn loại (nhớ loại lần trước) rồi luyện |
 | `veng login` / `veng logout` | lưu / xoá key |
-| `veng stats` | xem tiến độ |
+| `veng stats` | tiến độ từng loại |
 
 Biến môi trường (ghi đè file cấu hình): `VENG_API_KEY`, `VENG_API_URL`.
 
@@ -37,7 +39,7 @@ Biến môi trường (ghi đè file cấu hình): `VENG_API_KEY`, `VENG_API_URL
 | `Tab` | gợi ý: lần 1 cấu trúc · lần 2 thêm từ vựng · lần 3 tắt |
 | `Ctrl+R` | xem câu mẫu |
 | `Ctrl+N` | đề khác |
-| `Esc` | đóng gợi ý / câu mẫu |
+| `Esc` | đóng gợi ý / câu mẫu · không mở gì thì lưu bài, về menu |
 | `Ctrl+C` | lưu bài dở rồi thoát |
 | `Ctrl+A/E/U/W` | sửa dòng như shell |
 

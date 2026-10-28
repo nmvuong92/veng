@@ -4,7 +4,24 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-export const KIND = 'tense';
+/** Các mạch luyện dịch trên web (cùng endpoint /api/drills/:kind/*). axis = trục chấm thứ hai ngoài nghĩa. */
+export const KINDS = [
+  { id: 'tense', label: 'Các thì', axis: 'thì' },
+  { id: 'passive', label: 'Câu bị động', axis: 'bị động' },
+  { id: 'question', label: 'Đặt câu hỏi', axis: 'câu hỏi' },
+  { id: 'cond', label: 'Câu điều kiện', axis: 'điều kiện' },
+  { id: 'builder', label: 'Ráp câu', axis: 'ráp khối' },
+  { id: 'timex', label: 'Mốc thời gian', axis: 'mốc' },
+  { id: 'pattern', label: 'Công thức câu', axis: 'công thức' },
+  { id: 'be', label: 'be / being', axis: 'be' },
+  { id: 'engine', label: '32 engine nói nhanh', axis: 'engine' },
+  { id: 'phrasal', label: 'Cụm động từ', axis: 'cụm' },
+  { id: 'colloc', label: 'Collocation', axis: 'collocation' },
+  { id: 'adj', label: 'Tính từ mô tả', axis: 'tính từ' },
+  { id: 'opposite', label: 'Động từ trái nghĩa', axis: 'đối lập' },
+  { id: 'report', label: 'Báo cáo tháng', axis: 'văn phong' },
+] as const;
+export type Kind = (typeof KINDS)[number];
 const DIR = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'veng');
 export const CONFIG_PATH = join(DIR, 'config.json');
 const DEFAULT_URL = 'https://v92labs.info/api';
@@ -12,6 +29,8 @@ const DEFAULT_URL = 'https://v92labs.info/api';
 export interface Config {
   apiUrl: string;
   apiKey: string;
+  /** Loại luyện mở lần trước — menu đặt con trỏ sẵn ở đó. */
+  lastKind?: string;
 }
 
 export function loadConfig(): Config | null {
@@ -21,7 +40,19 @@ export function loadConfig(): Config | null {
   } catch {}
   const apiKey = process.env.VENG_API_KEY || file.apiKey;
   if (!apiKey) return null;
-  return { apiKey, apiUrl: process.env.VENG_API_URL || file.apiUrl || DEFAULT_URL };
+  return {
+    apiKey,
+    apiUrl: process.env.VENG_API_URL || file.apiUrl || DEFAULT_URL,
+    lastKind: file.lastKind,
+  };
+}
+
+/** Chỉ ghi lastKind vào file, không đụng key (key có thể đến từ biến môi trường). */
+export function saveLastKind(kind: string) {
+  try {
+    const file = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
+    if (file.lastKind !== kind) saveConfig({ ...file, lastKind: kind });
+  } catch {}
 }
 
 export function saveConfig(cfg: Config) {
@@ -106,7 +137,7 @@ export class ApiError extends Error {
   }
 }
 
-export function client(cfg: Config) {
+export function client(cfg: Config, kind: string = KINDS[0].id) {
   async function call<T>(path: string, body?: unknown): Promise<T> {
     let res: Response;
     try {
@@ -130,7 +161,7 @@ export function client(cfg: Config) {
     }
     return data as T;
   }
-  const k = `/drills/${KIND}`;
+  const k = `/drills/${kind}`;
   return {
     drill: (avoid: string[]) => call<Drill>(k, { avoid }),
     check: (vi: string, sentence: string) => call<Feedback>(`${k}/check`, { vi, sentence }),
