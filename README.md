@@ -43,6 +43,8 @@ Biến môi trường (ghi đè file cấu hình): `VENG_API_KEY`, `VENG_API_URL
 | `Ctrl+C` | lưu bài dở rồi thoát |
 | `Ctrl+A/E/U/W` | sửa dòng như shell |
 
+Ở menu: `↑↓` + `⏎`, hoặc bấm `1`–`9`, `a`–`e` để chọn nhanh (sáng lên trước, 1,2 giây sau tự vào — bấm `↑↓`/`Esc` để huỷ).
+
 ## Phát triển
 
 ```bash

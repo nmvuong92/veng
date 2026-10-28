@@ -250,6 +250,8 @@ function AnswerInput({
   return useLineEditor(value, onChange, true);
 }
 
+/** Phím chọn nhanh ở menu: 1–9 rồi a–z. */
+const HOTKEYS = '123456789abcdefghijklmnopqrstuvwxyz';
 const LABEL_W = Math.max(...KINDS.map((k) => k.label.length)) + 2;
 
 /** Một dòng tiến độ ở menu: thanh đoạn đã làm / kho đề · số đoạn · điểm TB. */
@@ -291,14 +293,36 @@ export function App({ cfg }: { cfg: Config }) {
         .catch(() => {});
     }
   }, [cfg, kind]);
+  /** Bấm phím tắt: tô sáng trước, chờ một nhịp rồi vào — kịp đổi ý nếu bấm nhầm. */
+  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelPending = () => {
+    if (pending.current) clearTimeout(pending.current);
+    pending.current = null;
+  };
+  useEffect(() => cancelPending, []);
+  const open = (i: number) => {
+    cancelPending();
+    saveLastKind(KINDS[i].id);
+    setKind(KINDS[i]);
+  };
   useInput(
     (input, key) => {
       if (key.ctrl && (input === 'c' || input === 'd')) return exit();
-      if (key.upArrow) setCur((c) => (c + KINDS.length - 1) % KINDS.length);
-      if (key.downArrow || key.tab) setCur((c) => (c + 1) % KINDS.length);
-      if (key.return) {
-        saveLastKind(KINDS[cur].id);
-        setKind(KINDS[cur]);
+      if (key.upArrow) {
+        cancelPending();
+        setCur((c) => (c + KINDS.length - 1) % KINDS.length);
+      }
+      if (key.downArrow || key.tab) {
+        cancelPending();
+        setCur((c) => (c + 1) % KINDS.length);
+      }
+      if (key.escape) cancelPending();
+      if (key.return) open(cur);
+      const i = key.ctrl || key.meta ? -1 : HOTKEYS.indexOf(input.toLowerCase());
+      if (i >= 0 && i < KINDS.length) {
+        cancelPending();
+        setCur(i);
+        pending.current = setTimeout(() => open(i), 1200);
       }
     },
     { isActive: !kind },
@@ -313,6 +337,9 @@ export function App({ cfg }: { cfg: Config }) {
           <Text key={k.id}>
             <Text color={i === cur ? WARM : undefined} bold={i === cur}>
               {i === cur ? ' ▸ ' : '   '}
+            </Text>
+            <Text color="gray">{HOTKEYS[i]} </Text>
+            <Text color={i === cur ? WARM : undefined} bold={i === cur}>
               {k.label.padEnd(LABEL_W)}
             </Text>
             <KindProgress st={progress[k.id]} />
@@ -322,6 +349,7 @@ export function App({ cfg }: { cfg: Config }) {
       <Keys
         items={[
           ['↑↓', 'chọn'],
+          ['1–9 a–e', 'chọn nhanh'],
           ['⏎', 'vào luyện'],
           ['^C', 'thoát'],
         ]}
