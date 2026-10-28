@@ -1,4 +1,4 @@
-import { Box, Text, Transform, useApp, useInput } from 'ink';
+import { Box, Text, Transform, useApp, useInput, useStdout } from 'ink';
 import Gradient from 'ink-gradient';
 import Spinner from 'ink-spinner';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
@@ -148,9 +148,20 @@ function Header({ stats, kind }: { stats: Stats | null; kind?: Kind }) {
 }
 
 /** Khối chấm: thanh dọc màu theo kết quả, gọn một cột — điểm, nhận xét, sửa lỗi, câu đúng, cách nói khác. */
-function FeedbackView({ fb, sample, axis }: { fb: Feedback; sample: string; axis: string }) {
+function FeedbackView({
+  fb,
+  sample,
+  axis,
+  lean = false,
+}: {
+  fb: Feedback;
+  sample: string;
+  axis: string;
+  /** Màn hình thấp: bỏ cách nói khác / giới từ / lưu ý vặt để cả khối vừa màn hình. */
+  lean?: boolean;
+}) {
   const right = fb.corrected || sample;
-  const alts = [
+  const alts = lean ? [] : [
     ...(norm(sample) !== norm(right) ? [sample] : []),
     ...(fb.natural ?? []),
   ].filter((x, i, arr) => x && norm(x) !== norm(right) && arr.findIndex((y) => norm(y) === norm(x)) === i);
@@ -192,7 +203,7 @@ function FeedbackView({ fb, sample, axis }: { fb: Feedback; sample: string; axis
         <Hang mark={<Text color={BRAND}>✓ </Text>}>
           <Text bold>{right}</Text>
         </Hang>
-        {fb.preps?.map((p) => (
+        {(lean ? [] : (fb.preps ?? [])).map((p) => (
           <Hang key={p.phrase} indent={2} mark={<Text> </Text>}>
             <Text color={WARM}>{p.phrase}</Text>
             <Text color={MUTED}> · {p.why}</Text>
@@ -209,7 +220,8 @@ function FeedbackView({ fb, sample, axis }: { fb: Feedback; sample: string; axis
           </>
         ) : null}
       </Box>
-      {fb.styleNote ? <Text color={MUTED}>· {fb.styleNote}</Text> : null}
+      {fb.styleNote && !lean ? <Text color={MUTED}>· {fb.styleNote}</Text> : null}
+      {lean ? <Text color={MUTED}>… thu gọn cho vừa màn hình (kéo giãn cửa sổ để xem đủ)</Text> : null}
     </Box>
   );
 }
@@ -386,7 +398,18 @@ const pick = <T,>(a: readonly T[]) => a[Math.floor(Math.random() * a.length)] as
  * Hiệu ứng ngay sau khi AI chấm (~1.5s): đúng = pháo hoa bung hai bên + điểm đếm lên,
  * gần đúng = chữ vàng nảy, sai = chữ đỏ rung + glitch rồi rõ dần. Xong thì tự tắt.
  */
-function Verdict({ fb, streak, onEnd }: { fb: Feedback; streak: number; onEnd: () => void }) {
+function Verdict({
+  fb,
+  streak,
+  onEnd,
+  compact = false,
+}: {
+  fb: Feedback;
+  streak: number;
+  onEnd: () => void;
+  /** Một dòng — cho câu đã rời đi trong lúc chờ chấm (chấm chạy nền). */
+  compact?: boolean;
+}) {
   const tone: keyof typeof CHEERS = fb.meaningOk && fb.tenseOk ? 'good' : fb.meaningOk ? 'near' : 'bad';
   const color = tone === 'good' ? BRAND : tone === 'near' ? WARM : BAD;
   const word = useRef(pick(CHEERS[tone])).current;
@@ -444,6 +467,31 @@ function Verdict({ fb, streak, onEnd }: { fb: Feedback; streak: number; onEnd: (
     return cells.join('');
   };
   const pad = Math.max(0, mid - Math.floor(banner.length / 2) + shake);
+
+  if (compact) {
+    const trail =
+      tone === 'good'
+        ? Array.from({ length: Math.min(6, Math.floor(t / 110)) }, (_, k) =>
+            t > 1150 ? '·' : (SPARKS[(k + Math.floor(t / 80)) % SPARKS.length] as string),
+          ).join(' ')
+        : '';
+    return (
+      <Box marginLeft={4}>
+        <Text>
+          {' '.repeat(Math.max(0, 2 + shake))}
+          <Text bold inverse color={color}>
+            {shown}
+          </Text>
+          <Text bold color={color}>
+            {' '}
+            {score}/10
+          </Text>
+          {trail ? <Text color={WARM}> {trail}</Text> : null}
+          {tone === 'good' && streak >= 2 ? <Text color={WARM}>{`  🔥 ${streak}`}</Text> : null}
+        </Text>
+      </Box>
+    );
+  }
 
   return (
     <Box flexDirection="column" marginLeft={4}>
@@ -802,6 +850,43 @@ function HistoryView({
   );
 }
 
+const patch = <T,>(a: T[], i: number, v: T): T[] => {
+  const n = [...a];
+  n[i] = v;
+  return n;
+};
+/** Số dòng terminal một đoạn chữ chiếm khi xuống dòng trong bề rộng w (ước lượng). */
+const rowsOf = (s: string, w: number) => Math.max(1, Math.ceil(s.length / Math.max(10, w)));
+
+/** Kích thước terminal, cập nhật khi kéo giãn cửa sổ. */
+function useTermSize() {
+  const { stdout } = useStdout();
+  const [size, setSize] = useState({ cols: stdout.columns || 80, rows: stdout.rows || 24 });
+  useEffect(() => {
+    const on = () => setSize({ cols: stdout.columns || 80, rows: stdout.rows || 24 });
+    stdout.on('resize', on);
+    return () => {
+      stdout.off('resize', on);
+    };
+  }, [stdout]);
+  return size;
+}
+
+/** Chiều cao (ước lượng) của khối nhận xét — để biết đoạn có vừa màn hình không. */
+function feedbackRows(fb: Feedback, sample: string, w: number, lean = false): number {
+  const right = fb.corrected || sample;
+  let n = 1 + rowsOf(fb.comment, w);
+  if (fb.tenseNote) n += rowsOf(fb.tenseNote, w);
+  if (fb.fixes?.length) n += 1 + fb.fixes.reduce((k, f) => k + rowsOf(`${f.wrong} → ${f.right} · ${f.why}`, w), 0);
+  n += 1 + rowsOf(right, w - 2);
+  if (lean) return n + 1;
+  for (const p of fb.preps ?? []) n += rowsOf(`${p.phrase} · ${p.why}`, w - 2);
+  const alts = (fb.natural ?? []).length + (norm(sample) !== norm(right) ? 1 : 0);
+  if (alts) n += 1 + alts * rowsOf(right, w - 2);
+  if (fb.styleNote) n += 1;
+  return n;
+}
+
 function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () => void }) {
   const { exit } = useApp();
   const api = useRef<Client>(client(cfg, kind.id)).current;
@@ -827,6 +912,12 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const [gradedAs, setGradedAs] = useState<string[]>([]);
   const seen = useRef<string[]>([]);
   const summarized = useRef('');
+  /** Câu đang chờ AI chấm (chấm chạy nền, vẫn gõ câu khác được). */
+  const [pending, setPending] = useState<boolean[]>([]);
+  /** Đề đang mở — kết quả chấm về muộn của đề cũ thì không được ghi đè đề mới. */
+  const drillKey = useRef('');
+  const inflight = useRef(new Set<Promise<void>>());
+  const term = useTermSize();
 
   const steps = drill ? linesOf(drill) : [];
   const allGraded = steps.length > 0 && feedbacks.every(Boolean);
@@ -840,9 +931,11 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
       const n = linesOf(d).length;
       const ans = a?.length === n ? a : Array(n).fill('');
       const fbs = f?.length === n ? f : Array(n).fill(null);
+      drillKey.current = linesOf(d)[0]?.vi ?? d.vi;
       setDrill(d);
       setAnswers(ans);
       setFeedbacks(fbs);
+      setPending(Array(n).fill(false));
       setGradedAs(ans.map((x, i) => (fbs[i] ? x : '')));
       setSummary(null);
       summarized.current = '';
@@ -923,44 +1016,62 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
       });
   }, [api, drill, allGraded, steps, answers, feedbacks]);
 
-  async function grade(i: number) {
+  /** Câu chưa làm kế tiếp (bỏ qua câu đang chấm), ưu tiên phía dưới; -1 nếu hết. */
+  const nextOpen = (from: number, pend = pending) => {
+    const open = (j: number) => j !== from && !feedbacks[j] && !pend[j];
+    const down = steps.findIndex((_, j) => j > from && open(j));
+    return down >= 0 ? down : steps.findIndex((_, j) => open(j));
+  };
+
+  /** Chấm chạy nền: gửi đi rồi chuyển ngay sang câu kế tiếp, không bắt chờ AI. */
+  function grade(i: number) {
     const line = steps[i];
-    const answer = answers[i]?.trim();
-    if (!line || !answer || busy) return;
-    setBusy('AI đang chấm…');
+    const raw = answers[i] ?? '';
+    const answer = raw.trim();
+    if (!line || !answer || pending[i]) return;
+    const key = drillKey.current;
+    const pend = patch(pending, i, true);
+    setPending(pend);
     setError('');
-    try {
-      const fb = await api.check(line.vi, answer);
-      const next = [...feedbacks];
-      next[i] = fb;
-      setFeedbacks(next);
-      streak.current = fb.meaningOk && fb.tenseOk ? streak.current + 1 : 0;
-      setBurst({ i, key: Date.now() });
-      setGradedAs((g) => {
-        const n = [...g];
-        n[i] = answers[i] ?? '';
-        return n;
-      });
-      await api
-        .result({
-          drillKey: steps[0]?.vi ?? line.vi,
-          lineIndex: i,
-          vi: line.vi,
-          answer,
-          score: fb.score,
-          meaningOk: fb.meaningOk,
-          tenseOk: fb.tenseOk,
-          corrected: fb.corrected,
-          tenseNote: fb.tenseNote,
-        })
-        .catch(() => {});
-      if (drill) void api.saveState({ drill, answers, feedbacks: next }).catch(() => {});
-      reloadStats();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(null);
+    const j = nextOpen(i, pend);
+    if (j >= 0) {
+      setCur(j);
+      setHint(0);
+      setReveal(false);
     }
+    const job = (async () => {
+      try {
+        const fb = await api.check(line.vi, answer);
+        const same = drillKey.current === key;
+        if (same) {
+          setFeedbacks((f) => patch(f, i, fb));
+          setGradedAs((g) => patch(g, i, raw));
+          streak.current = fb.meaningOk && fb.tenseOk ? streak.current + 1 : 0;
+          setBurst({ i, key: Date.now() });
+        }
+        // Lịch sử vẫn ghi dù đã sang đề khác — bài đó đã làm thật.
+        await api
+          .result({
+            drillKey: key || line.vi,
+            lineIndex: i,
+            vi: line.vi,
+            answer,
+            score: fb.score,
+            meaningOk: fb.meaningOk,
+            tenseOk: fb.tenseOk,
+            corrected: fb.corrected,
+            tenseNote: fb.tenseNote,
+          })
+          .catch(() => {});
+        reloadStats();
+      } catch (e) {
+        if (drillKey.current === key) setError(`Câu ${i + 1}: ${(e as Error).message}`);
+      } finally {
+        if (drillKey.current === key) setPending((p) => patch(p, i, false));
+      }
+    })();
+    inflight.current.add(job);
+    void job.finally(() => inflight.current.delete(job));
   }
 
   const move = (d: number) => {
@@ -970,6 +1081,10 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   };
 
   async function quit(back = false) {
+    if (inflight.current.size) {
+      setBusy('Đang chờ chấm xong…');
+      await Promise.allSettled([...inflight.current]);
+    }
     if (drill) await api.saveState({ drill, answers, feedbacks }).catch(() => {});
     back ? onBack() : exit();
   }
@@ -1020,18 +1135,18 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     }
     if (key.ctrl && input === 'r') return setReveal((r) => !r);
     if (key.return) {
+      if (pending[cur]) return;
       if (allGraded && !answerChanged(cur)) return void nextDrill();
       if (feedbacks[cur] && !answerChanged(cur)) {
-        const n = feedbacks.findIndex((f, i) => !f && i > cur);
-        const any = n < 0 ? feedbacks.findIndex((f) => !f) : n;
-        if (any >= 0) {
-          setCur(any);
+        const j = nextOpen(cur);
+        if (j >= 0) {
+          setCur(j);
           setHint(0);
           setReveal(false);
         }
         return;
       }
-      void grade(cur);
+      grade(cur);
     }
   });
 
@@ -1056,6 +1171,77 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
 
   const done = feedbacks.filter(Boolean).length;
   const right = feedbacks.filter((f) => f?.meaningOk && f?.tenseOk).length;
+  const grading = pending.filter(Boolean).length;
+
+  // ── Khung nhìn: ước lượng chiều cao từng câu; không vừa màn hình thì chỉ hiện các câu
+  // quanh câu đang làm, phần còn lại thu thành một dòng "↑ / ↓ n câu".
+  // ponytail: ước lượng theo số ký tự (không đo thật) — lệch vài dòng thì còn biên an toàn.
+  const W = term.cols - 2;
+  const lineRows = (i: number, lean = false) => {
+    const l = steps[i];
+    const fb = feedbacks[i];
+    if (!l) return 0;
+    let n = rowsOf(`${l.vi} 10/10`, W - 5);
+    if (i !== cur) {
+      if (fb) {
+        const ans = gradedAs[i] || answers[i] || '';
+        n += rowsOf(ans, W - 6) + rowsOf(fb.corrected || l.answer, W - 6);
+        if (burst?.i === i) n += 1;
+      } else if (answers[i]) n += rowsOf(answers[i] ?? '', W - 6);
+      return n;
+    }
+    n += 1 + rowsOf(answers[i] || ' ', W - 6);
+    if (pending[i]) n += 1;
+    if (hint) n += rowsOf(`${l.hint} · ${l.patterns?.join(' · ')}`, W - 7) + (hint === 2 ? 6 : 0);
+    if (reveal && !fb) n += rowsOf(l.answer, W - 11);
+    if (fb) n += burst?.i === i ? 6 : feedbackRows(fb, l.answer, W - 6, lean);
+    if (l.reply && (fb || reveal)) n += 1 + rowsOf(l.reply, W - 20) + (l.replyVi ? rowsOf(l.replyVi, W - 20) : 0);
+    return n;
+  };
+  const chrome =
+    2 +
+    (drill?.context ? rowsOf(drill.context, W - 3) : 0) +
+    2 +
+    (allGraded ? 4 + (summary ? rowsOf(summary.overall, W - 4) + summary.focus.length : 1) : 0) +
+    (wrapped ? 2 : 0) +
+    (busy ? 1 : 0) +
+    (error ? rowsOf(error, W) : 0) +
+    rowsOf('⏎ chấm / câu tiếp   ↑↓ đổi câu   tab gợi ý ×2   ^R xem mẫu   ^N đề khác   ^L lịch sử   esc đóng gợi ý / menu   ^C lưu & thoát', W) +
+    2;
+  let from = 0;
+  let to = steps.length - 1;
+  const budget = term.rows - chrome;
+  // Câu đang làm một mình đã không vừa → thu gọn khối nhận xét của nó.
+  const lean = lineRows(cur) > budget;
+  const heights = steps.map((_, i) => (i === cur ? lineRows(i, lean) : lineRows(i)));
+  if (heights.reduce((a, b) => a + b, 0) > budget) {
+    from = to = Math.min(cur, steps.length - 1);
+    let used = heights[from] ?? 0;
+    const markers = (a: number, b: number) => (a > 0 ? 1 : 0) + (b < steps.length - 1 ? 1 : 0);
+    for (let grow = true; grow; ) {
+      grow = false;
+      // Ưu tiên hiện câu sắp làm, rồi mới tới câu đã qua.
+      for (const [a, b] of [
+        [from, to + 1],
+        [from - 1, to],
+      ] as const) {
+        if (a < 0 || b >= steps.length || (a === from && b === to)) continue;
+        const add = heights[a === from ? b : a] ?? 0;
+        if (used + add + markers(a, b) <= budget) {
+          used += add;
+          from = a;
+          to = b;
+          grow = true;
+        }
+      }
+    }
+  }
+  const tally = (a: number, b: number) => {
+    const fbs = feedbacks.slice(a, b);
+    const ok = fbs.filter((f) => f?.meaningOk && f?.tenseOk).length;
+    const bad = fbs.filter((f) => f && !(f.meaningOk && f.tenseOk)).length;
+    return [ok ? `✓${ok}` : '', bad ? `✗${bad}` : ''].filter(Boolean).join(' ');
+  };
 
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -1065,9 +1251,17 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
           {drill.context ? <Text color={MUTED}>🗣 {drill.context}</Text> : null}
           <Text color={MUTED}>
             Đoạn {steps.length} câu · đã chấm {done}/{steps.length} · đúng {right}
+            {grading ? ` · đang chấm ${grading}` : ''}
           </Text>
           <Box flexDirection="column" marginTop={1}>
+            {from > 0 ? (
+              <Text color={MUTED}>
+                {`  ↑ ${from} câu trên`}
+                {tally(0, from) ? ` (${tally(0, from)})` : ''}
+              </Text>
+            ) : null}
             {steps.map((l, i) => {
+              if (i < from || i > to) return null;
               const fb = feedbacks[i];
               const active = i === cur;
               const mark = fb ? (fb.meaningOk && fb.tenseOk ? '✓' : '✗') : active ? '▸' : '·';
@@ -1076,7 +1270,13 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                   <Hang
                     mark={
                       <Text>
-                        <Text color={fb ? toneOf(fb) : active ? WARM : MUTED}>{mark} </Text>
+                        {pending[i] ? (
+                          <Text color={WARM}>
+                            <Spinner type="dots" />{' '}
+                          </Text>
+                        ) : (
+                          <Text color={fb ? toneOf(fb) : active ? WARM : MUTED}>{mark} </Text>
+                        )}
                         <Text color={MUTED}>{String(i + 1).padStart(2, '0')} </Text>
                       </Text>
                     }
@@ -1085,12 +1285,20 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       {l.vi}
                     </Text>
                     {!active && fb ? <Text color={toneOf(fb)}> {fb.score}/10</Text> : null}
+                    {pending[i] && !active ? <Text color={MUTED}> · đang chấm…</Text> : null}
                   </Hang>
                   {active ? (
                     <>
                       <Hang indent={4} trim={false} mark={<Text color={WARM}>› </Text>}>
                         {busy ? answers[i] : <AnswerInput value={answers[i] ?? ''} onChange={setAnswer} />}
                       </Hang>
+                      {pending[i] ? (
+                        <Box marginLeft={6}>
+                          <Text color={BRAND}>
+                            <Spinner type="dots" /> AI đang chấm câu này…
+                          </Text>
+                        </Box>
+                      ) : null}
                       {hint ? (
                         <Box flexDirection="column" marginLeft={4}>
                           <Hang mark={<Text>💡 </Text>}>
@@ -1108,7 +1316,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       {fb && burst?.i === i ? (
                         <Verdict key={burst.key} fb={fb} streak={streak.current} onEnd={endBurst} />
                       ) : fb ? (
-                        <FeedbackView fb={fb} sample={l.answer} axis={kind.axis} />
+                        <FeedbackView fb={fb} sample={l.answer} axis={kind.axis} lean={lean} />
                       ) : null}
                       {/* Mạch hỏi / ráp câu / be: câu đáp của người kia, như web — hiện khi đã chấm hoặc xem mẫu. */}
                       {l.reply && (fb || reveal) ? (
@@ -1122,7 +1330,12 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       ) : null}
                     </>
                   ) : fb ? (
-                    <GradedLines answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
+                    <>
+                      {burst?.i === i ? (
+                        <Verdict key={burst.key} compact fb={fb} streak={streak.current} onEnd={endBurst} />
+                      ) : null}
+                      <GradedLines answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
+                    </>
                   ) : answers[i] ? (
                     <Hang indent={4} mark={<Text color={MUTED}>› </Text>}>
                       <Text color={MUTED}>{answers[i]}</Text>
@@ -1131,6 +1344,12 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                 </Box>
               );
             })}
+            {to < steps.length - 1 ? (
+              <Text color={MUTED}>
+                {`  ↓ ${steps.length - 1 - to} câu dưới`}
+                {tally(to + 1, steps.length) ? ` (${tally(to + 1, steps.length)})` : ''}
+              </Text>
+            ) : null}
           </Box>
           {allGraded ? (
             <Box flexDirection="column" borderStyle="round" borderColor={BRAND} paddingX={1}>
