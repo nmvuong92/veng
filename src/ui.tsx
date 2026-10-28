@@ -270,30 +270,31 @@ const QUOTES = [
   'Đừng dịch trong đầu. Nghĩ bằng tiếng Anh.',
   'One sentence at a time.',
 ];
-const SPLASH_MS = 2600;
+/** Lúc hiệu ứng chạy xong (chữ đã giải mã + gõ hết) — sau đó đứng chờ Enter. */
+const SPLASH_MS = 2100;
 
 /**
- * Màn chào ~2s: chữ VENG "giải mã" từ nhiễu quét trái → phải, dải màu lướt qua,
- * khẩu hiệu tự gõ. Bấm phím bất kỳ để bỏ qua.
+ * Màn chào: chữ VENG "giải mã" từ nhiễu quét trái → phải, dải màu lướt qua,
+ * khẩu hiệu tự gõ, rồi đứng chờ ⏎ để vào menu (phím khác = tua tới cuối hiệu ứng).
  */
 function Splash({ lines, onDone }: { lines: number | null; onDone: () => void }) {
   const [t, setT] = useState(0);
   // Mỗi ô một độ trễ ngẫu nhiên — chữ hiện lấm tấm chứ không thẳng tắp.
   const jitter = useRef(LOGO.map((row) => [...row].map(() => Math.random() * 260))).current;
   const quote = useRef(QUOTES[Math.floor(Math.random() * QUOTES.length)] as string).current;
+  const { exit } = useApp();
+  const start = useRef(Date.now());
+  // Dải màu cứ trôi trong lúc chờ Enter cho màn hình "sống".
   useEffect(() => {
-    const start = Date.now();
-    const id = setInterval(() => {
-      const el = Date.now() - start;
-      setT(el);
-      if (el >= SPLASH_MS) {
-        clearInterval(id);
-        onDone();
-      }
-    }, 40);
+    const id = setInterval(() => setT(Date.now() - start.current), 40);
     return () => clearInterval(id);
-  }, [onDone]);
-  useInput(() => onDone());
+  }, []);
+  useInput((input, key) => {
+    if (key.ctrl && (input === 'c' || input === 'd')) return exit();
+    if (key.return) return onDone();
+    start.current = Math.min(start.current, Date.now() - SPLASH_MS);
+  });
+  const ready = t >= SPLASH_MS;
 
   const width = LOGO[0]?.length ?? 1;
   const logo = LOGO.map((row, y) =>
@@ -324,6 +325,13 @@ function Splash({ lines, onDone }: { lines: number | null; onDone: () => void })
         {lines ? (
           <Text color="gray">{typed(`  ${lines} câu đã luyện — tiếp nào.`, 1300)}</Text>
         ) : null}
+      </Box>
+      <Box marginTop={1}>
+        {ready ? (
+          <Text color={Math.floor(t / 600) % 2 ? 'gray' : WARM}>⏎ Enter để bắt đầu</Text>
+        ) : (
+          <Text> </Text>
+        )}
       </Box>
     </Box>
   );
