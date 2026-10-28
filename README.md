@@ -39,6 +39,7 @@ Biến môi trường (ghi đè file cấu hình): `VENG_API_KEY`, `VENG_API_URL
 | `Tab` | gợi ý: lần 1 cấu trúc · lần 2 thêm từ vựng · lần 3 tắt |
 | `Ctrl+R` | xem câu mẫu |
 | `Ctrl+N` | đề khác |
+| `Ctrl+U` | trên câu đã chấm: viết lại (câu đã chấm là chỉ đọc) |
 | `Ctrl+T` | đổi màu khung câu đang làm (vàng · ngọc · tím · xanh · hồng · bạc), nhớ cho lần sau |
 | `Ctrl+L` | lịch sử: `↑↓` chọn bài · `⏎` xem từng câu · `r` học lại · `Tab` cần cải thiện / tất cả · `←→` trang · `Esc` quay lại |
 | `Esc` | đóng gợi ý / câu mẫu · không mở gì thì lưu bài, về menu |

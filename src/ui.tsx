@@ -218,9 +218,6 @@ function FeedbackView({
   // Câu đã nhập được AI đánh dấu (✎) rồi câu đúng (✓), thẳng cột với › để so từng chữ; nhận xét xuống dưới.
   return (
     <Box flexDirection="column" marginLeft={3}>
-      {numbered && marked ? (
-        <MarkedAnswer segs={marked.segs} width={width - 5} mark={<Text color={WARM}>✎ </Text>} />
-      ) : null}
       <Hang mark={<Text color={BRAND}>✓ </Text>} bold color={BRAND}>
         {right}
       </Hang>
@@ -403,6 +400,29 @@ function FixList({ fixes }: { fixes: Fix[] }) {
   );
 }
 
+/** Chuỗi đúng như sẽ hiện trên dòng câu đã chấm (bản đánh dấu: cũ + mới + số) — để ước chiều cao. */
+const shownAnswer = (fb: Feedback | null | undefined, answer: string) =>
+  fb?.marked
+    ? parseCritic(fb.marked)
+        .segs.map((g) => (g.fix ? `${g.fix.old} ${g.fix.neu}¹ ` : g.s))
+        .join('')
+    : answer;
+
+/** Câu đã chấm (đang mở): bản AI đánh dấu nếu có, không thì câu đã viết — chỉ đọc. */
+function AnsweredLine({ fb, answer, width, color }: { fb: Feedback; answer: string; width: number; color: string }) {
+  const marked = fb.marked ? parseCritic(fb.marked) : null;
+  const mark = <Text color={color}>› </Text>;
+  return marked?.fixes.length ? (
+    <Box marginLeft={3}>
+      <MarkedAnswer segs={marked.segs} width={width - 5} mark={mark} />
+    </Box>
+  ) : (
+    <Hang indent={3} mark={mark}>
+      {answer}
+    </Hang>
+  );
+}
+
 function GradedLines({
   answer,
   fb,
@@ -480,6 +500,7 @@ function KeysHelp({ frame }: { frame: string }) {
         ['↑↓', 'đổi câu'],
         ['tab', 'gợi ý: cấu trúc → từ vựng → tắt'],
         ['^R', 'xem câu mẫu'],
+        ['^U', 'viết lại câu đã chấm'],
       ],
     ],
     [
@@ -1122,7 +1143,6 @@ function useTermSize() {
 function feedbackRows(fb: Feedback, sample: string, w: number, lean = false): number {
   const right = fb.corrected || sample;
   let n = 1 + rowsOf(fb.comment, w);
-  if (fb.marked) n += rowsOf(fb.marked, w - 5); // dòng ✎ (chuỗi có cả mã đánh dấu → ước dư, an toàn)
   if (fb.tenseNote) n += rowsOf(fb.tenseNote, w);
   if (fb.fixes?.length) n += 1 + fb.fixes.reduce((k, f) => k + rowsOf(`${f.wrong} → ${f.right} · ${f.why}`, w), 0);
   n += 1 + rowsOf(right, w - 2);
@@ -1393,10 +1413,20 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
       return;
     }
     if (key.ctrl && input === 'r') return setReveal((r) => !r);
+    // Câu đã chấm là chỉ đọc; ^U = viết lại (xoá bài + kết quả câu này, mở lại ô nhập). Lịch sử vẫn giữ.
+    if (key.ctrl && input === 'u' && feedbacks[cur] && !pending[cur]) {
+      setFeedbacks((f) => patch(f, cur, null));
+      setAnswers((a) => patch(a, cur, ''));
+      setGradedAs((g) => patch(g, cur, ''));
+      setBurst(null);
+      setSummary(null);
+      summarized.current = '';
+      return;
+    }
     if (key.return) {
       if (pending[cur]) return;
-      if (allGraded && !answerChanged(cur)) return void nextDrill();
-      if (feedbacks[cur] && !answerChanged(cur)) {
+      if (allGraded) return void nextDrill();
+      if (feedbacks[cur]) {
         const j = nextOpen(cur);
         if (j >= 0) {
           setCur(j);
@@ -1408,9 +1438,6 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
       grade(cur);
     }
   });
-
-  // Đã chấm mà sửa câu thì Enter chấm lại; chưa sửa thì Enter đi tiếp.
-  const answerChanged = (i: number) => feedbacks[i] != null && gradedAs[i] !== answers[i];
 
   const setAnswer = (v: string) =>
     setAnswers((a) => {
@@ -1436,18 +1463,20 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const quickKeys: [string, string][] = [
     ...((hint || reveal
       ? [['esc', 'đóng gợi ý']]
-      : allGraded && !answerChanged(cur)
+      : allGraded
         ? [
             ['⏎', 'đoạn mới'],
+            ['^U', 'viết lại'],
             ['^L', 'lịch sử'],
           ]
-        : curFb && !answerChanged(cur)
+        : curFb
           ? [
               ['⏎', 'câu tiếp'],
+              ['^U', 'viết lại'],
               ['↑↓', 'đổi câu'],
             ]
           : [
-              ['⏎', curFb ? 'chấm lại' : 'chấm'],
+              ['⏎', 'chấm'],
               ['tab', 'gợi ý'],
               ['↑↓', 'đổi câu'],
             ]) as [string, string][]),
@@ -1467,12 +1496,12 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     if (i !== cur) {
       if (fb) {
         const ans = gradedAs[i] || answers[i] || '';
-        n += rowsOf(ans, W - 6) + rowsOf(fb.corrected || l.answer, W - 6);
+        n += rowsOf(shownAnswer(fb, ans), W - 6) + rowsOf(fb.corrected || l.answer, W - 6);
         if (burst?.i === i) n += 1;
       } else if (answers[i]) n += rowsOf(answers[i] ?? '', W - 6);
       return n;
     }
-    n += 2 + rowsOf(answers[i] || ' ', W - 6); // 2 = viền trên + dưới của khung câu đang làm
+    n += 2 + rowsOf(shownAnswer(fb, answers[i] || ' '), W - 6); // 2 = viền trên + dưới của khung câu đang làm
     if (pending[i]) n += 1;
     if (hint) n += rowsOf(`${l.hint} · ${l.patterns?.join(' · ')}`, W - 7) + (hint === 2 ? 6 : 0);
     if (reveal && !fb) n += rowsOf(l.answer, W - 11);
@@ -1581,9 +1610,18 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                   </Hang>
                   {active ? (
                     <>
-                      <Hang indent={3} trim={false} mark={<Text color={frame.color}>› </Text>}>
-                        {busy ? answers[i] : <AnswerInput value={answers[i] ?? ''} onChange={setAnswer} />}
-                      </Hang>
+                      {fb ? (
+                        // Đã chấm: chỉ đọc, không con trỏ — hiện luôn câu AI đã đánh dấu lỗi.
+                        <AnsweredLine fb={fb} answer={gradedAs[i] || answers[i] || ''} width={W} color={frame.color} />
+                      ) : busy || pending[i] ? (
+                        <Hang indent={3} color={MUTED} mark={<Text color={frame.color}>› </Text>}>
+                          {answers[i]}
+                        </Hang>
+                      ) : (
+                        <Hang indent={3} trim={false} mark={<Text color={frame.color}>› </Text>}>
+                          <AnswerInput value={answers[i] ?? ''} onChange={setAnswer} />
+                        </Hang>
+                      )}
                       {pending[i] ? (
                         <Box marginLeft={5}>
                           <Text color={BRAND}>
