@@ -379,6 +379,8 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
     },
     /** Tra IPA (không AI, server nhớ trong DB) — dùng lại endpoint trang Shadowing. */
     ipa: (words: string[]) => call<{ words: Record<string, IpaEntry> }>('/shadowing/ipa', { words }),
+    /** Google dịch Anh → Việt (miễn phí, server cache vĩnh viễn). */
+    enVi: (text: string) => call<{ translatedText: string }>('/translate', { text }),
     history: (filter: 'weak' | 'all', page: number, pageSize: number) =>
       call<HistoryPage>(`${k}/history?filter=${filter}&page=${page}&pageSize=${pageSize}`),
   };

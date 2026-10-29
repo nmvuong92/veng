@@ -1360,14 +1360,17 @@ const LEVEL_COLOR: Record<string, string> = {
  */
 /**
  * ^P — tra IPA nhanh, KHÔNG tốn token: chỉ từ điển phát âm (CMUdict, từ lạ espeak đoán theo
- * chính tả), server nhớ trong DB. Gõ từ / cụm / câu → IPA từng từ; có gợi ý autocomplete.
+ * chính tả), server nhớ trong DB. Gõ từ / cụm / câu → IPA từng từ + Google dịch nghĩa tiếng Việt
+ * (miễn phí, cache); có gợi ý autocomplete.
  */
 function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
   const { exit } = useApp();
   const api = useRef(client(cfg)).current;
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
-  const [results, setResults] = useState<{ q: string; rows: { w: string; e?: IpaEntry }[]; error?: string }[]>([]);
+  const [results, setResults] = useState<
+    { q: string; rows: { w: string; e?: IpaEntry }[]; vi?: string | null; error?: string }[]
+  >([]);
   const input = useLineEditor(q, setQ, !busy);
   const token = q.match(/[A-Za-z]+$/)?.[0] ?? '';
   const sug = useSuggest(api, token, !busy, (w) => setQ(`${q.slice(0, q.length - token.length)}${w} `));
@@ -1380,9 +1383,10 @@ function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
     const toks = tokensOf(text);
     if (!toks.length) return;
     setBusy(true);
-    api
-      .ipa(toks)
-      .then((r) => ({ q: text, rows: toks.map((w) => ({ w, e: r.words[ipaKey(w)] })) }))
+    // Google dịch lỗi thì thôi, IPA vẫn hiện.
+    const vi = api.enVi(text).then((r) => r.translatedText, () => null);
+    Promise.all([api.ipa(toks), vi])
+      .then(([r, v]) => ({ q: text, rows: toks.map((w) => ({ w, e: r.words[ipaKey(w)] })), vi: v }))
       .catch((e) => ({ q: text, rows: [], error: (e as Error).message }))
       .then((x) => {
         setResults((p) => [x, ...p.filter((y) => y.q !== text)].slice(0, 3));
@@ -1396,7 +1400,7 @@ function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
         <Text color={WARM} bold>
           ▍IPA
         </Text>
-        <Text color={MUTED}> · từ điển phát âm, không tốn token · ^P hoặc esc để đóng</Text>
+        <Text color={MUTED}> · từ điển phát âm + Google dịch, không tốn token · ^P hoặc esc để đóng</Text>
       </Text>
       <Box borderStyle="round" borderColor={WARM} paddingX={1}>
         <Text color={WARM}>› </Text>
@@ -1420,6 +1424,12 @@ function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
             </Box>
           ) : null}
           {x.error ? <Text color={BAD}>    ✗ {x.error}</Text> : <IpaTable rows={x.rows} />}
+          {x.vi ? (
+            <Text dimColor={i > 0}>
+              <Text color={MUTED}>  Google  </Text>
+              <Text color={BRAND}>{x.vi}</Text>
+            </Text>
+          ) : null}
         </Box>
       ))}
       <Keys
