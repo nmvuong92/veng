@@ -50,17 +50,26 @@ const FAINT = '#4a5260';
 /** Ô nhập một dòng, phím kiểu readline. Tự viết vì ink-text-input nuốt Ctrl+chữ thành ký tự. */
 function useLineEditor(value: string, onChange: (v: string) => void, active: boolean, mask = false) {
   const [cur, setCur] = useState(value.length);
-  // Chữ đổi từ bên ngoài (điền gợi ý autocomplete) → con trỏ về cuối; tự gõ thì giữ vị trí.
-  const own = useRef(value);
-  const change = (v: string) => {
-    own.current = v;
-    onChange(v);
+  // Chữ + vị trí con trỏ "thật" nằm trong ref, cập nhật NGAY: Ink có thể gọi handler nhiều lần
+  // liền trong một nhịp (bộ gõ chốt chữ "tình" rồi tới phím cách) trước khi React vẽ lại — đọc
+  // từ props/state thì lần sau thấy chữ cũ và đè mất chữ vừa gõ.
+  const val = useRef(value);
+  const pos = useRef(cur);
+  const set = (v: string, c: number) => {
+    pos.current = c;
+    setCur(c);
+    if (v !== val.current) {
+      val.current = v;
+      onChange(v);
+    }
   };
+  // Chữ đổi từ bên ngoài (điền gợi ý, xoá sau khi tra) → con trỏ về cuối.
   useEffect(() => {
-    if (value !== own.current) {
-      own.current = value;
+    if (value !== val.current) {
+      val.current = value;
+      pos.current = value.length;
       setCur(value.length);
-    } else setCur((c) => Math.min(c, value.length));
+    }
   }, [value]);
   // Con trỏ khối nhấp nháy ~530ms như terminal; gõ / di chuyển thì sáng lại và đếm nhịp từ đầu.
   const [on, setOn] = useState(true);
@@ -73,25 +82,22 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
   }, [value, cur, active]);
   useInput(
     (input, key) => {
+      const value = val.current;
+      const cur = Math.min(pos.current, value.length);
       if (key.return || key.tab || key.upArrow || key.downArrow || key.escape) return;
-      if (key.leftArrow) return setCur((c) => Math.max(0, c - 1));
-      if (key.rightArrow) return setCur((c) => Math.min(value.length, c + 1));
+      if (key.leftArrow) return set(value, Math.max(0, cur - 1));
+      if (key.rightArrow) return set(value, Math.min(value.length, cur + 1));
       if (key.backspace || key.delete) {
         if (cur === 0) return;
-        change(value.slice(0, cur - 1) + value.slice(cur));
-        return setCur(cur - 1);
+        return set(value.slice(0, cur - 1) + value.slice(cur), cur - 1);
       }
       if (key.ctrl) {
-        if (input === 'a') return setCur(0);
-        if (input === 'e') return setCur(value.length);
-        if (input === 'u') {
-          change(value.slice(cur));
-          return setCur(0);
-        }
+        if (input === 'a') return set(value, 0);
+        if (input === 'e') return set(value, value.length);
+        if (input === 'u') return set(value.slice(cur), 0);
         if (input === 'w') {
           const start = value.slice(0, cur).replace(/\S+\s*$/, '').length;
-          change(value.slice(0, start) + value.slice(cur));
-          return setCur(start);
+          return set(value.slice(0, start) + value.slice(cur), start);
         }
         return; // các Ctrl khác là phím tắt của màn hình
       }
@@ -119,10 +125,7 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
       }
       // Dấu rời (e + ̂ + ̣) → một chữ "ệ", để con trỏ / ⌫ đếm đúng từng chữ.
       const head = v.slice(0, c).normalize('NFC');
-      v = head + v.slice(c).normalize('NFC');
-      if (v === value) return;
-      change(v);
-      setCur(head.length);
+      set(head + v.slice(c).normalize('NFC'), head.length);
     },
     { isActive: active },
   );
