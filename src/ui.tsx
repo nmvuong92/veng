@@ -1402,7 +1402,12 @@ function useSuggest(
     const id = setTimeout(() => {
       api
         .suggest(t)
-        .then((r) => live && setFetched(r.items.filter((s) => s.word.toLowerCase() !== t)))
+        // Giữ cả mục trùng đúng chữ đã gõ, đưa lên đầu: nó cho biết từ đã có trong kho (kèm nghĩa).
+        .then((r) => {
+          if (!live) return;
+          const same = r.items.filter((s) => s.word.toLowerCase() === t);
+          setFetched([...same, ...r.items.filter((s) => s.word.toLowerCase() !== t)]);
+        })
         .catch(() => live && setFetched([]));
     }, 150);
     return () => {
@@ -1428,11 +1433,16 @@ function useSuggest(
 }
 
 /** Tô sáng đoạn khớp với chữ đang gõ (lần xuất hiện đầu, không phân biệt hoa/thường). */
-function Highlight({ text, q, bold }: { text: string; q: string; bold?: boolean }) {
+function Highlight({ text, q, bold, dim }: { text: string; q: string; bold?: boolean; dim?: boolean }) {
   const i = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1;
-  if (i < 0) return <Text bold={bold}>{text}</Text>;
+  if (i < 0)
+    return (
+      <Text bold={bold} dimColor={dim}>
+        {text}
+      </Text>
+    );
   return (
-    <Text bold={bold}>
+    <Text bold={bold} dimColor={dim}>
       {text.slice(0, i)}
       <Text color={BRAND} underline bold>
         {text.slice(i, i + q.length)}
@@ -1471,13 +1481,21 @@ function SuggestList({
     <Box flexDirection="column" marginLeft={2}>
       {recent ? <Text color={MUTED}>  đã tra gần đây</Text> : null}
       {items.map((s, i) => (
+        // ● xanh = đã có trong kho (chữ sáng + nghĩa) · ○ mờ = chỉ có trong từ điển.
         <Text key={s.word} wrap="truncate-end">
-          <Text color={WARM}>{i === sel ? '▸ ' : '  '}</Text>
-          <Highlight text={shown[i] ?? s.word} q={q} bold={i === sel} />
+          <Text color={WARM}>{i === sel ? '▸' : ' '}</Text>
+          <Text color={s.inDb ? BRAND : FAINT}>{s.inDb ? '● ' : '○ '}</Text>
+          <Highlight text={shown[i] ?? s.word} q={q} bold={i === sel || s.inDb} dim={!s.inDb && i !== sel} />
           {' '.repeat(w - (shown[i] ?? s.word).length)}
-          {s.inDb ? <Text color={MUTED}>  {s.meaning}</Text> : <Text color={FAINT}>  · chưa có trong kho</Text>}
+          {s.inDb ? <Text>  {s.meaning}</Text> : <Text color={FAINT}>  chưa có trong kho</Text>}
         </Text>
       ))}
+      <Text>
+        <Text color={BRAND}>  ● </Text>
+        <Text color={MUTED}>trong kho   </Text>
+        <Text color={FAINT}>○ </Text>
+        <Text color={MUTED}>chưa có (từ điển)</Text>
+      </Text>
       <Text color={MUTED}>
         {sel >= 0
           ? `  ⏎ dùng "${items[sel]?.word}" · ↑↓ về "${q || '…'}" để giữ chữ đã gõ`
