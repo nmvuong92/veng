@@ -1,6 +1,7 @@
-import { Box, Text, Transform, useApp, useInput, useStdout } from 'ink';
+import { Box, type DOMElement, Text, Transform, useApp, useCursor, useInput, useStdout } from 'ink';
 import Gradient from 'ink-gradient';
 import Spinner from 'ink-spinner';
+import stringWidth from 'string-width';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
   type Client,
@@ -126,12 +127,37 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
     { isActive: active },
   );
   const shown = mask ? '•'.repeat(value.length) : value;
+
+  // Đặt con trỏ THẬT của terminal đúng chỗ đang gõ: bộ gõ tiếng Việt kiểu "gạch chân" (macOS,
+  // OpenKey/EVKey bật preedit) vẽ chữ đang ghép tại con trỏ thật — Ink mặc định để nó cuối màn
+  // hình nên chữ hiện lạc ra ngoài ô. Toạ độ = cộng dồn vị trí layout (Yoga) từ ô nhập lên gốc.
+  const ref = useRef<DOMElement>(null);
+  const { setCursorPosition } = useCursor();
+  useEffect(() => {
+    if (!active) return;
+    let x = 0;
+    let y = 0;
+    let node: DOMElement | undefined = ref.current ?? undefined;
+    const width = node?.yogaNode?.getComputedWidth() || 1;
+    while (node?.yogaNode) {
+      x += node.yogaNode.getComputedLeft();
+      y += node.yogaNode.getComputedTop();
+      node = node.parentNode;
+    }
+    // ponytail: xuống dòng tính theo ký tự (Ink ngắt theo từ) — câu dài lệch tối đa vài ô ở dòng sau.
+    const col = stringWidth(shown.slice(0, cur));
+    setCursorPosition({ x: x + (col % width), y: y + Math.floor(col / width) });
+  });
+  useEffect(() => (active ? () => setCursorPosition(undefined) : undefined), [active, setCursorPosition]);
+
   return (
-    <Text>
-      {shown.slice(0, cur)}
-      <Text inverse={on}>{shown[cur] ?? ' '}</Text>
-      {shown.slice(cur + 1)}
-    </Text>
+    <Box ref={ref} flexGrow={1} flexShrink={1}>
+      <Text>
+        {shown.slice(0, cur)}
+        <Text inverse={on}>{shown[cur] ?? ' '}</Text>
+        {shown.slice(cur + 1)}
+      </Text>
+    </Box>
   );
 }
 
@@ -1174,16 +1200,14 @@ function ViEnView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () =
         <Text color={MUTED}> · Google + AI (cách nói, mức độ thông dụng) · ^G hoặc esc để đóng</Text>
       </Text>
       <Box borderStyle="round" borderColor={WARM} paddingX={1}>
-        <Text>
-          <Text color={WARM}>› </Text>
-          {busy ? (
-            <Text color={MUTED}>
-              <Spinner type="dots" /> đang tra…
-            </Text>
-          ) : (
-            input
-          )}
-        </Text>
+        <Text color={WARM}>› </Text>
+        {busy ? (
+          <Text color={MUTED}>
+            <Spinner type="dots" /> đang tra…
+          </Text>
+        ) : (
+          input
+        )}
       </Box>
       {!results.length && !busy ? <Text color={MUTED}>  Gõ tiếng Việt (từ, cụm hoặc câu) rồi ⏎.</Text> : null}
       {results.map((x, i) => (
@@ -1387,10 +1411,10 @@ function VocabView({
         <Header stats={null} title="Từ vựng · tra từ, IPA, thêm bằng AI" />
       )}
       <Box borderStyle="round" borderColor={WARM} paddingX={1}>
-        <Text>
+        <Box>
           <Text color={WARM}>› </Text>
           {typing ? input : <Text color={MUTED}>{q}</Text>}
-        </Text>
+        </Box>
       </Box>
       <SuggestList items={sug.items} sel={sug.sel} q={sug.q} recent={sug.recent} />
       {phase.s === 'idle' && !sug.items.length ? (
@@ -2398,9 +2422,12 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                           {answers[i]}
                         </Hang>
                       ) : (
-                        <Hang indent={3} trim={false} mark={<Text color={frame.color}>› </Text>}>
+                        <Box marginLeft={3}>
+                          <Box flexShrink={0}>
+                            <Text color={frame.color}>› </Text>
+                          </Box>
                           <AnswerInput value={answers[i] ?? ''} onChange={setAnswer} />
-                        </Hang>
+                        </Box>
                       )}
                       {pending[i] ? (
                         <Box marginLeft={5}>
@@ -2533,10 +2560,10 @@ export function Login({ apiUrl }: { apiUrl: string }) {
           <Text>
             Dán <Text bold>CLI_API_KEY</Text> <Text color={MUTED}>({apiUrl})</Text>
           </Text>
-          <Text>
+          <Box>
             <Text color={WARM}>› </Text>
             {input}
-          </Text>
+          </Box>
           {state === 'checking' ? (
             <Text color={BRAND}>
               <Spinner type="dots" /> Đang kiểm tra…
