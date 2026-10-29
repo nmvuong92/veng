@@ -12,6 +12,9 @@ import {
   type HistoryPage,
   type IpaEntry,
   type Suggestion,
+  type Spell,
+  loadMisspells,
+  saveMisspell,
   type ViEn,
   type WordDetail,
   type WordItem,
@@ -636,6 +639,7 @@ function KeysHelp({ frame }: { frame: string }) {
         ['^F', 'tra từ (popup, bài vẫn giữ)'],
         ['^G', 'Việt → Anh: Google + AI'],
         ['^P', 'IPA — không tốn token'],
+        ['^O', 'nhắc chính tả khi gõ: bật / tắt'],
         ['^X', 'luyện lại từ đầu (khi hết kho)'],
       ],
     ],
@@ -689,21 +693,137 @@ function Keys({ items }: { items: [string, string][] }) {
  * nhập): Ink chỉ giữ con trỏ thật nếu component đặt nó được vẽ lại trong lượt đó — để bong bóng
  * tự vẽ lại riêng thì mỗi nhịp con trỏ thật biến mất.
  */
+/** Nhắc chính tả trong ô trả lời — ^O bật/tắt (lưu config). Module-level cho mọi chỗ dùng chung. */
+const SPELL = { on: true };
+/** Tối đa chừng này lần nhắc mỗi đoạn — tránh dựa dẫm. */
+const SPELL_BUDGET = 3;
+
+/** Chữ nào trong từ đúng KHÁC chữ đã gõ (theo LCS) → tô lên để nhớ chỗ hay sai. */
+function diffMarks(typed: string, right: string): { ch: string; bad: boolean }[] {
+  const a = typed.toLowerCase();
+  const b = right.toLowerCase();
+  const dp = Array.from({ length: a.length + 1 }, () => Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i--)
+    for (let j = b.length - 1; j >= 0; j--)
+      dp[i]![j] = a[i] === b[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
+  const out: { ch: string; bad: boolean }[] = [];
+  let i = 0;
+  for (let j = 0; j < b.length; j++) {
+    if (i < a.length && a[i] === b[j] && dp[i]![j] === dp[i + 1]![j + 1]! + 1) {
+      out.push({ ch: right[j] ?? '', bad: false });
+      i++;
+    } else {
+      if (i < a.length && dp[i + 1]![j]! >= dp[i]![j + 1]!) {
+        i++;
+        j--;
+        continue;
+      }
+      out.push({ ch: right[j] ?? '', bad: true });
+    }
+  }
+  return out;
+}
+
+/** Từ đúng với các chữ bạn viết sai được tô vàng + gạch chân. */
+function SpellWord({ typed, right, bold }: { typed: string; right: string; bold?: boolean }) {
+  return (
+    <Text bold={bold}>
+      {diffMarks(typed, right).map((m, i) =>
+        m.bad ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: chữ cái theo vị trí
+          <Text key={i} color={WARM} underline bold>
+            {m.ch}
+          </Text>
+        ) : (
+          m.ch
+        ),
+      )}
+    </Text>
+  );
+}
+
+/**
+ * Ô trả lời + bong bóng "đang nghĩ" ở góc phải + dòng nhắc chính tả bên dưới. Nhịp animation nằm
+ * Ở ĐÂY (cùng component với ô nhập): Ink chỉ giữ con trỏ thật nếu component đặt nó được vẽ lại
+ * trong lượt đó — để bong bóng tự vẽ lại riêng thì mỗi nhịp con trỏ thật biến mất.
+ *
+ * Nhắc chính tả: từ vừa gõ xong (dấu cách / dấu câu) hoặc dừng tay 1,5s mà KHÔNG phải từ thật →
+ * hiện từ đúng (tô chỗ sai) + IPA. Không có phím điền — tự gõ lại mới nhớ. Bỏ qua chữ viết hoa giữa
+ * câu (tên riêng, viết tắt) và chữ có trong câu mẫu. Mỗi đoạn tối đa SPELL_BUDGET từ (`allow`).
+ */
 function AnswerInput({
   value,
   onChange,
   wide,
+  api,
+  sample,
+  allow,
+  left,
 }: {
   value: string;
   onChange: (v: string) => void;
   wide: boolean;
+  api: Client;
+  sample: string;
+  /** Còn lượt nhắc cho từ này không (đếm + ghi "từ hay sai" khi nhắc lần đầu). */
+  allow: (wrong: string, right: string) => boolean;
+  left: number;
 }) {
   const t = useThinkingTick(value);
+  const [spell, setSpell] = useState<{ w: string; s: Spell['suggestions'] } | null>(null);
+  useEffect(() => {
+    if (!SPELL.on) return setSpell(null);
+    if (spell && !new RegExp(`(^|[^A-Za-z'])${spell.w}([^A-Za-z']|$)`, 'i').test(value)) setSpell(null);
+    const done = /[\s.,!?;:]$/.test(value);
+    const m = value.match(done ? /([A-Za-z']+)[\s.,!?;:]+$/ : /([A-Za-z']+)$/);
+    const w = m?.[1] ?? '';
+    if (w.length < 3) return;
+    const first = value.trimStart().startsWith(w);
+    if (!first && /[A-Z]/.test(w)) return; // tên riêng / viết tắt
+    if (new RegExp(`(^|[^a-z'])${w.toLowerCase()}([^a-z']|$)`).test(sample.toLowerCase())) return;
+    let live = true;
+    const id = setTimeout(
+      () => {
+        api
+          .spell(w)
+          .then((r) => {
+            if (!live) return;
+            const top = r.suggestions[0];
+            if (r.ok || !top) return setSpell((x) => (x?.w.toLowerCase() === w.toLowerCase() ? null : x));
+            if (allow(w.toLowerCase(), top.word)) setSpell({ w, s: r.suggestions });
+          })
+          .catch(() => {});
+      },
+      done ? 0 : 1500,
+    );
+    return () => {
+      live = false;
+      clearTimeout(id);
+    };
+  }, [value]);
+  const top = spell?.s[0];
   return (
-    <>
-      {useLineEditor(value, onChange, true)}
-      <ThinkingHint text={value} t={t} wide={wide} />
-    </>
+    <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+      <Box>
+        {useLineEditor(value, onChange, true)}
+        <ThinkingHint text={value} t={t} wide={wide} />
+      </Box>
+      {spell && top ? (
+        <Text>
+          <Text color={WARM}>✎ </Text>
+          <Text color={MUTED} strikethrough>
+            {spell.w}
+          </Text>
+          <Text color={MUTED}> → </Text>
+          <SpellWord typed={spell.w} right={top.word} bold />
+          {top.ipa ? <Text color={MUTED}> /{top.ipa}/</Text> : null}
+          {spell.s.length > 1 ? (
+            <Text color={MUTED}> · hoặc {spell.s.slice(1).map((x) => x.word).join(', ')}</Text>
+          ) : null}
+          <Text color={MUTED}> · gõ lại theo mẫu{left < SPELL_BUDGET ? ` (còn ${left} lần nhắc)` : ''}</Text>
+        </Text>
+      ) : null}
+    </Box>
   );
 }
 
@@ -1002,6 +1122,7 @@ function KindProgress({ st }: { st?: Stats }) {
 /** Mở veng: chọn loại luyện (con trỏ sẵn ở loại lần trước) → vào luyện; Esc trong bài → quay lại đây. */
 export function App({ cfg }: { cfg: Config }) {
   const { exit } = useApp();
+  SPELL.on = cfg.spell !== false;
   const [kind, setKind] = useState<Kind | null>(null);
   /** home = màn chào + 2 mục · kinds = chọn loại luyện · ipa = tra phiên âm. */
   const [screen, setScreen] = useState<'home' | 'kinds' | 'vocab'>('home');
@@ -1432,6 +1553,7 @@ function VocabView({
   const [q, setQ] = useState('');
   const [phase, setPhase] = useState<VocabPhase>({ s: 'idle' });
   const [recent, setRecent] = useState<Lookup[]>(() => loadLookups());
+  const [misspells] = useState(() => loadMisspells());
   /** ^G: chuyển sang tra Việt → Anh; ô nhập + gợi ý ở đây phải tắt để phím không lọt vào cả hai. */
   const [vien, setVien] = useState(false);
   const typing =
@@ -1562,6 +1684,22 @@ function VocabView({
       <SuggestList items={sug.items} sel={sug.sel} q={sug.q} recent={sug.recent} />
       {phase.s === 'idle' && !sug.items.length ? (
         <Text color={MUTED}>  Gõ một từ, cụm hoặc cả câu tiếng Anh rồi ⏎ — tra kho + IPA.</Text>
+      ) : null}
+      {!q.trim() && misspells.length && (phase.s === 'idle' || phase.s === 'saved') ? (
+        <Box flexDirection="column" marginTop={1} marginLeft={2}>
+          <Text color={MUTED}>  hay viết sai (từ nhắc chính tả khi luyện)</Text>
+          {misspells.slice(0, 6).map((m) => (
+            <Text key={m.wrong}>
+              {'    '}
+              <Text color={MUTED} strikethrough>
+                {m.wrong}
+              </Text>
+              <Text color={MUTED}> → </Text>
+              <SpellWord typed={m.wrong} right={m.right} bold />
+              {m.n > 1 ? <Text color={BAD}>{`  ×${m.n}`}</Text> : null}
+            </Text>
+          ))}
+        </Box>
       ) : null}
       {phase.s === 'busy' ? (
         <Text color={BRAND}>
@@ -1780,10 +1918,24 @@ function SuggestList({
         // ● xanh = đã có trong kho (chữ sáng + nghĩa) · ○ mờ = chỉ có trong từ điển.
         <Text key={s.word} wrap="truncate-end">
           <Text color={WARM}>{i === sel ? '▸' : ' '}</Text>
-          <Text color={s.inDb ? BRAND : FAINT}>{s.inDb ? '● ' : '○ '}</Text>
-          <Highlight text={shown[i] ?? s.word} q={q} bold={i === sel || s.inDb} dim={!s.inDb && i !== sel} />
+          {s.fuzzy ? (
+            <Text color={WARM}>≈ </Text>
+          ) : (
+            <Text color={s.inDb ? BRAND : FAINT}>{s.inDb ? '● ' : '○ '}</Text>
+          )}
+          {s.fuzzy ? (
+            <SpellWord typed={q} right={shown[i] ?? s.word} bold={i === sel} />
+          ) : (
+            <Highlight text={shown[i] ?? s.word} q={q} bold={i === sel || s.inDb} dim={!s.inDb && i !== sel} />
+          )}
           {' '.repeat(w - (shown[i] ?? s.word).length)}
-          {s.inDb ? <Text>  {s.meaning}</Text> : <Text color={FAINT}>  chưa có trong kho</Text>}
+          {s.fuzzy ? (
+            <Text color={WARM}>  có thể bạn muốn gõ</Text>
+          ) : s.inDb ? (
+            <Text>  {s.meaning}</Text>
+          ) : (
+            <Text color={FAINT}>  chưa có trong kho</Text>
+          )}
         </Text>
       ))}
       <Text>
@@ -2089,6 +2241,22 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const frame = FRAMES[frameIdx] ?? FRAMES[0]!;
   /** ^K: bảng phím tắt đầy đủ; mặc định chỉ một dòng gợi ý theo tình huống. */
   const [showKeys, setShowKeys] = useState(false);
+  /** Báo ngắn (vd bật/tắt nhắc chính tả) — tự tắt sau 1,5s. */
+  const [note, setNote] = useState('');
+  useEffect(() => {
+    if (!note) return;
+    const id = setTimeout(() => setNote(''), 1500);
+    return () => clearTimeout(id);
+  }, [note]);
+  /** Từ đã nhắc chính tả trong đoạn này — tối đa SPELL_BUDGET, sang đề mới thì đếm lại. */
+  const spellUsed = useRef(new Set<string>());
+  const allowSpell = (wrong: string, right: string) => {
+    if (spellUsed.current.has(wrong)) return true;
+    if (spellUsed.current.size >= SPELL_BUDGET) return false;
+    spellUsed.current.add(wrong);
+    saveMisspell(wrong, right);
+    return true;
+  };
   /** Câu vừa chấm xong → chạy hiệu ứng đúng/sai; key đổi mỗi lần chấm để chạy lại từ đầu. */
   const [burst, setBurst] = useState<{ i: number; key: number } | null>(null);
   const streak = useRef(0);
@@ -2122,6 +2290,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
       const ans = a?.length === n ? a : Array(n).fill('');
       const fbs = f?.length === n ? f : Array(n).fill(null);
       drillKey.current = linesOf(d)[0]?.vi ?? d.vi;
+      spellUsed.current = new Set();
       setDrill(d);
       setAnswers(ans);
       setFeedbacks(fbs);
@@ -2298,6 +2467,13 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     // ^P: popup tra IPA (không AI, không tốn token). ^I không dùng được: terminal gửi giống Tab.
     if (key.ctrl && input === 'p') return setView('ipa');
     if (key.ctrl && input === 'k') return setShowKeys((v) => !v);
+    // ^O: bật / tắt nhắc chính tả (lưu config) — muốn luyện "thật" thì tắt.
+    if (key.ctrl && input === 'o') {
+      SPELL.on = !SPELL.on;
+      savePrefs({ spell: SPELL.on });
+      setNote(SPELL.on ? '✎ nhắc chính tả: bật (tối đa 3 lần / đoạn)' : '✎ nhắc chính tả: tắt');
+      return;
+    }
     if (key.ctrl && input === 't') {
       const next = (frameIdx + 1) % FRAMES.length;
       setFrameIdx(next);
@@ -2583,7 +2759,15 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                           <Box flexShrink={0}>
                             <Text color={frame.color}>› </Text>
                           </Box>
-                          <AnswerInput value={answers[i] ?? ''} onChange={setAnswer} wide={term.cols >= 90} />
+                          <AnswerInput
+                            value={answers[i] ?? ''}
+                            onChange={setAnswer}
+                            wide={term.cols >= 90}
+                            api={api}
+                            sample={l.answer}
+                            allow={allowSpell}
+                            left={SPELL_BUDGET - spellUsed.current.size}
+                          />
                         </Box>
                       )}
                       {pending[i] ? (
@@ -2678,6 +2862,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
         </Text>
       ) : null}
       {error ? <Text color={BAD}>✗ {error}</Text> : null}
+      {note ? <Text color={WARM}>{note}</Text> : null}
       {showKeys ? <KeysHelp frame={frame.name} /> : <Keys items={quickKeys} />}
     </Box>
   );

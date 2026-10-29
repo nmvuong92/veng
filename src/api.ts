@@ -33,6 +33,8 @@ export interface Config {
   lastKind?: string;
   /** Màu khung câu đang làm (^T đổi). */
   frame?: string;
+  /** Nhắc chính tả trong ô trả lời (^O bật/tắt) — mặc định bật. */
+  spell?: boolean;
 }
 
 export function loadConfig(): Config | null {
@@ -47,11 +49,12 @@ export function loadConfig(): Config | null {
     apiUrl: process.env.VENG_API_URL || file.apiUrl || DEFAULT_URL,
     lastKind: file.lastKind,
     frame: file.frame,
+    spell: file.spell,
   };
 }
 
 /** Ghi tuỳ chọn (loại lần trước, màu khung) vào file, không đụng key (key có thể đến từ biến môi trường). */
-export function savePrefs(prefs: Pick<Config, 'lastKind' | 'frame'>) {
+export function savePrefs(prefs: Pick<Config, 'lastKind' | 'frame' | 'spell'>) {
   try {
     const file = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
     saveConfig({ ...file, ...prefs });
@@ -91,6 +94,31 @@ export function saveLookup(entry: Lookup): Lookup[] {
     writeFileSync(LOOKUPS_PATH, `${JSON.stringify(next, null, 1)}\n`);
   } catch {}
   return next;
+}
+
+/** Từ hay viết sai (máy này) — ~/.config/veng/misspells.json, mới nhất trước, đếm số lần. */
+export interface Misspell {
+  wrong: string;
+  right: string;
+  n: number;
+}
+const MISSPELLS_PATH = join(DIR, 'misspells.json');
+export function loadMisspells(): Misspell[] {
+  try {
+    const v = JSON.parse(readFileSync(MISSPELLS_PATH, 'utf8'));
+    return Array.isArray(v) ? v.filter((x) => typeof x?.wrong === 'string' && typeof x?.right === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+export function saveMisspell(wrong: string, right: string) {
+  const all = loadMisspells();
+  const old = all.find((x) => x.wrong === wrong);
+  const next = [{ wrong, right, n: (old?.n ?? 0) + 1 }, ...all.filter((x) => x.wrong !== wrong)].slice(0, 100);
+  try {
+    mkdirSync(DIR, { recursive: true, mode: 0o700 });
+    writeFileSync(MISSPELLS_PATH, `${JSON.stringify(next, null, 1)}\n`);
+  } catch {}
 }
 
 export const defaultUrl = () => process.env.VENG_API_URL || DEFAULT_URL;
@@ -200,6 +228,13 @@ export interface Suggestion {
   word: string;
   inDb: boolean;
   meaning?: string;
+  /** Gợi ý gần đúng chính tả (gõ sai) — không khớp tiền tố. */
+  fuzzy?: boolean;
+}
+export interface Spell {
+  word: string;
+  ok: boolean;
+  suggestions: { word: string; ipa: string | null }[];
 }
 /** Một từ trong kho (rút gọn từ /api/words/page). */
 export interface WordItem {
@@ -323,6 +358,8 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
       call<{ items: Suggestion[] }>(`/words/suggest?q=${encodeURIComponent(q)}&limit=8`),
     viEn: (text: string) => call<ViEn>('/translate/vi-en', { text }),
     wordDetail: (id: string) => call<WordDetail>(`/words/${encodeURIComponent(id)}`),
+    /** Chữ có sai chính tả không → từ đúng gần nhất + IPA (không AI). */
+    spell: (w: string) => call<Spell>(`/words/spell?w=${encodeURIComponent(w)}`),
     /** Tìm trong kho từ vựng (khớp từ / nghĩa / ví dụ). */
     searchWords: (q: string) =>
       call<{ items: WordItem[]; total: number }>(`/words/page?q=${encodeURIComponent(q)}&limit=8`),
