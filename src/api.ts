@@ -156,7 +156,8 @@ export interface Feedback {
   /** Bài người học đánh dấu lỗi bằng CriticMarkup ({~~sai~>đúng~~}{>>lý do<<}…) — server cũ không có. */
   marked?: string;
   /** Giới từ trong câu đúng + vì sao — server cũ / kết quả cũ không có. */
-  preps?: { phrase: string; why: string }[];
+  /** pic: hình ảnh liên tưởng để nhớ giới từ (bản chấm cũ không có). */
+  preps?: { phrase: string; why: string; pic?: string }[];
 }
 export interface Stats {
   cycle: number;

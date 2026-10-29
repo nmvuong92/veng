@@ -398,9 +398,12 @@ function FeedbackView({
       {preps.length ? (
         <Box flexDirection="column" marginTop={alts.length ? 1 : 0}>
           {preps.map((p) => (
-            <Hang key={p.phrase} color={MUTED} mark={<Text color={MUTED}>· </Text>}>
-              <Text color={WARM}>{p.phrase}</Text> · {p.why}
-            </Hang>
+            <Box key={p.phrase} flexDirection="column">
+              <Hang color={MUTED} mark={<Text color={MUTED}>· </Text>}>
+                <Text color={WARM}>{p.phrase}</Text> · {p.why}
+              </Hang>
+              {p.pic ? <Hang mark="  ">{p.pic}</Hang> : null}
+            </Box>
           ))}
         </Box>
       ) : null}
@@ -2301,7 +2304,10 @@ function feedbackRows(fb: Feedback, sample: string, w: number, lean = false): nu
   const alts = altsOf(fb, sample);
   const sideRows = (sw: number) => {
     let n = alts.length ? 1 + alts.reduce((k, x) => k + rowsOf(x, sw - 2), 0) : 0;
-    if (fb.preps?.length) n += (n ? 1 : 0) + fb.preps.reduce((k, p) => k + rowsOf(`${p.phrase} · ${p.why}`, sw - 2), 0);
+    if (fb.preps?.length)
+      n +=
+        (n ? 1 : 0) +
+        fb.preps.reduce((k, p) => k + rowsOf(`${p.phrase} · ${p.why}`, sw - 2) + (p.pic ? rowsOf(p.pic, sw - 2) : 0), 0);
     if (fb.styleNote) n += rowsOf(fb.styleNote, sw);
     return n;
   };
