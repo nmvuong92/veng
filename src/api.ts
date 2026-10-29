@@ -165,6 +165,13 @@ export interface HistoryPage {
   pageSize: number;
 }
 
+/** Phiên âm một từ (CMUdict, từ lạ thì espeak đoán theo chính tả — src 'rule'). */
+export interface IpaEntry {
+  ipa: string;
+  alts?: string[];
+  src: 'dict' | 'rule';
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -222,6 +229,8 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
     }) => call<Summary>(`${k}/summary`, body),
     vocab: (lines: { vi: string; answer: string }[]) => call<Vocab>(`${k}/vocab`, { lines }),
     reset: () => call<{ cycle: number }>(`${k}/reset`, {}),
+    /** Tra IPA (không AI, server nhớ trong DB) — dùng lại endpoint trang Shadowing. */
+    ipa: (words: string[]) => call<{ words: Record<string, IpaEntry> }>('/shadowing/ipa', { words }),
     history: (filter: 'weak' | 'all', page: number, pageSize: number) =>
       call<HistoryPage>(`${k}/history?filter=${filter}&page=${page}&pageSize=${pageSize}`),
   };

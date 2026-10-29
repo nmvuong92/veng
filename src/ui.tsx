@@ -9,6 +9,7 @@ import {
   type Drill,
   type Feedback,
   type HistoryPage,
+  type IpaEntry,
   KINDS,
   type Kind,
   linesOf,
@@ -170,14 +171,14 @@ const Check = ({ ok, label }: { ok: boolean; label: string }) => (
   </Text>
 );
 
-function Header({ stats, kind }: { stats: Stats | null; kind?: Kind }) {
+function Header({ stats, kind, title }: { stats: Stats | null; kind?: Kind; title?: string }) {
   return (
     <Box justifyContent="space-between" marginBottom={1} gap={2}>
       {/* Màn hẹp: bên trái tự cắt "…", số liệu bên phải giữ nguyên — không chồng chữ lên nhau. */}
       <Box flexShrink={1}>
         <Text wrap="truncate-end">
           <Gradient colors={[BRAND, WARM]}>▍veng</Gradient>
-          <Text color={MUTED}> · {kind ? kind.label : 'luyện dịch'} · Việt → Anh, AI chấm</Text>
+          <Text color={MUTED}> · {title ?? `${kind ? kind.label : 'luyện dịch'} · Việt → Anh, AI chấm`}</Text>
         </Text>
       </Box>
       {stats ? (
@@ -592,24 +593,48 @@ const SPLASH_MS = 2100;
  * Màn chào: chữ VENG "giải mã" từ nhiễu quét trái → phải, dải màu lướt qua,
  * khẩu hiệu tự gõ, rồi đứng chờ ⏎ để vào menu (phím khác = tua tới cuối hiệu ứng).
  */
-function Splash({ lines, onDone }: { lines: number | null; onDone: () => void }) {
+/** Hai mục ngay dưới logo ở màn chào. */
+const HOME = [
+  { id: 'practice', label: 'Luyện tập', desc: 'dịch Việt → Anh, AI chấm · 14 loại' },
+  { id: 'ipa', label: 'IPA', desc: 'gõ từ tiếng Anh → phiên âm' },
+] as const;
+type HomeId = (typeof HOME)[number]['id'];
+
+function Splash({
+  lines,
+  onPick,
+  instant = false,
+}: {
+  lines: number | null;
+  onPick: (id: HomeId) => void;
+  /** Quay về từ màn khác: hiện ngay khung cuối, khỏi chạy lại hiệu ứng. */
+  instant?: boolean;
+}) {
+  const [sel, setSel] = useState(0);
   const [t, setT] = useState(0);
   // Mỗi ô một độ trễ ngẫu nhiên — chữ hiện lấm tấm chứ không thẳng tắp.
   const jitter = useRef(LOGO.map((row) => [...row].map(() => Math.random() * 260))).current;
   const quote = useRef(QUOTES[Math.floor(Math.random() * QUOTES.length)] as string).current;
   const { exit } = useApp();
-  const start = useRef(Date.now());
+  const start = useRef(instant ? Date.now() - SPLASH_MS : Date.now());
   // Dải màu cứ trôi trong lúc chờ Enter cho màn hình "sống".
   useEffect(() => {
     const id = setInterval(() => setT(Date.now() - start.current), 40);
     return () => clearInterval(id);
   }, []);
+  const ready = t >= SPLASH_MS;
   useInput((input, key) => {
     if (key.ctrl && (input === 'c' || input === 'd')) return exit();
-    if (key.return) return onDone();
-    start.current = Math.min(start.current, Date.now() - SPLASH_MS);
+    // Đang chạy hiệu ứng: phím bất kỳ = tua tới cuối, hiện menu.
+    if (!ready) {
+      start.current = Math.min(start.current, Date.now() - SPLASH_MS);
+      return;
+    }
+    if (key.upArrow || key.downArrow || key.tab) return setSel((s) => (s + 1) % HOME.length);
+    const n = input.length === 1 ? Number(input) : 0;
+    if (n >= 1 && n <= HOME.length) return setSel(n - 1);
+    if (key.return) onPick(HOME[sel]?.id ?? 'practice');
   });
-  const ready = t >= SPLASH_MS;
 
   const width = LOGO[0]?.length ?? 1;
   const logo = LOGO.map((row, y) =>
@@ -641,13 +666,32 @@ function Splash({ lines, onDone }: { lines: number | null; onDone: () => void })
           <Text color={MUTED}>{typed(`  ${lines} câu đã luyện — tiếp nào.`, 1300)}</Text>
         ) : null}
       </Box>
-      <Box marginTop={1}>
-        {ready ? (
-          <Text color={Math.floor(t / 600) % 2 ? MUTED : WARM}>⏎ Enter để bắt đầu</Text>
-        ) : (
-          <Text> </Text>
-        )}
-      </Box>
+      {ready ? (
+        <Box flexDirection="column" marginTop={1}>
+          {HOME.map((h, i) => (
+            <Text key={h.id}>
+              <Text color={WARM} bold>
+                {i === sel ? ' ▸ ' : '   '}
+              </Text>
+              <Text color={MUTED}>{i + 1} </Text>
+              <Text color={i === sel ? WARM : undefined} bold={i === sel}>
+                {h.label.padEnd(11)}
+              </Text>
+              <Text color={MUTED}>{h.desc}</Text>
+            </Text>
+          ))}
+          <Keys
+            items={[
+              ['↑↓', 'chọn'],
+              ['1 2', 'nhảy tới'],
+              ['⏎', 'vào'],
+              ['^C', 'thoát'],
+            ]}
+          />
+        </Box>
+      ) : (
+        <Box marginTop={1} height={4} />
+      )}
     </Box>
   );
 }
@@ -819,8 +863,14 @@ function KindProgress({ st }: { st?: Stats }) {
 export function App({ cfg }: { cfg: Config }) {
   const { exit } = useApp();
   const [kind, setKind] = useState<Kind | null>(null);
-  const [splash, setSplash] = useState(true);
-  const endSplash = useCallback(() => setSplash(false), []);
+  /** home = màn chào + 2 mục · kinds = chọn loại luyện · ipa = tra phiên âm. */
+  const [screen, setScreen] = useState<'home' | 'kinds' | 'ipa'>('home');
+  const seenHome = useRef(false);
+  const pickHome = useCallback((id: HomeId) => {
+    seenHome.current = true;
+    setScreen(id === 'ipa' ? 'ipa' : 'kinds');
+  }, []);
+  const goHome = useCallback(() => setScreen('home'), []);
   const [cur, setCur] = useState(() => Math.max(0, KINDS.findIndex((k) => k.id === cfg.lastKind)));
   /** Tiến độ từng loại — tải lại mỗi lần về menu. */
   const [progress, setProgress] = useState<Record<string, Stats>>({});
@@ -836,6 +886,7 @@ export function App({ cfg }: { cfg: Config }) {
   useInput(
     (input, key) => {
       if (key.ctrl && (input === 'c' || input === 'd')) return exit();
+      if (key.escape) return goHome();
       if (key.upArrow) setCur((c) => (c + KINDS.length - 1) % KINDS.length);
       if (key.downArrow || key.tab) setCur((c) => (c + 1) % KINDS.length);
       if (key.return) {
@@ -847,12 +898,13 @@ export function App({ cfg }: { cfg: Config }) {
       const i = input.length !== 1 || key.ctrl || key.meta ? -1 : HOTKEYS.indexOf(input.toLowerCase());
       if (i >= 0 && i < KINDS.length) setCur(i);
     },
-    { isActive: !kind && !splash },
+    { isActive: !kind && screen === 'kinds' },
   );
-  if (splash) {
+  if (screen === 'home') {
     const total = Object.values(progress).reduce((n, st) => n + st.lines, 0);
-    return <Splash lines={total || null} onDone={endSplash} />;
+    return <Splash lines={total || null} onPick={pickHome} instant={seenHome.current} />;
   }
+  if (screen === 'ipa') return <IpaView cfg={cfg} onBack={goHome} />;
   if (kind) return <Practice key={kind.id} cfg={cfg} kind={kind} onBack={() => setKind(null)} />;
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -877,6 +929,92 @@ export function App({ cfg }: { cfg: Config }) {
           ['↑↓', 'chọn'],
           ['1–9 a–e', 'nhảy tới'],
           ['⏎', 'vào luyện'],
+          ['esc', 'về màn chào'],
+          ['^C', 'thoát'],
+        ]}
+      />
+    </Box>
+  );
+}
+
+type IpaResult = { q: string; words: { w: string; e?: IpaEntry }[]; error?: string };
+
+/**
+ * Tra IPA: gõ một từ (hoặc cả câu) → phiên âm từng từ. Không gọi AI — CMUdict, từ lạ thì
+ * espeak đoán theo chính tả; server nhớ trong DB nên từ nào cũng chỉ tra một lần.
+ */
+function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
+  const { exit } = useApp();
+  const api = useRef(client(cfg)).current;
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<IpaResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const input = useLineEditor(q, setQ, !loading);
+  useInput((ch, key) => {
+    if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
+    if (key.escape) return onBack();
+    if (!key.return || loading) return;
+    const words = (q.match(/[A-Za-z][A-Za-z'-]*/g) ?? []).slice(0, 30);
+    if (!words.length) return;
+    const query = q.trim();
+    setLoading(true);
+    api
+      .ipa(words)
+      .then((r) => ({ q: query, words: words.map((w) => ({ w, e: r.words[w.toLowerCase().replace(/^'+|'+$/g, '')] })) }))
+      .catch((e) => ({ q: query, words: [], error: (e as Error).message }))
+      .then((res) => {
+        setResults((p) => [res, ...p].slice(0, 6));
+        setQ('');
+        setLoading(false);
+      });
+  });
+  return (
+    <Box flexDirection="column" paddingX={1}>
+      <Header stats={null} title="IPA · phiên âm tiếng Anh" />
+      <Box borderStyle="round" borderColor={WARM} paddingX={1}>
+        <Text>
+          <Text color={WARM}>› </Text>
+          {loading ? (
+            <Text color={MUTED}>
+              <Spinner type="dots" /> đang tra…
+            </Text>
+          ) : (
+            input
+          )}
+        </Text>
+      </Box>
+      {!results.length ? <Text color={MUTED}>  Gõ một từ hoặc cả câu tiếng Anh rồi ⏎.</Text> : null}
+      {results.map((r, i) => {
+        const w = Math.max(...r.words.map((x) => x.w.length), 4);
+        return (
+          <Box key={`${i}-${r.q}`} flexDirection="column" marginTop={1}>
+            {r.words.length > 1 ? <Text color={MUTED} dimColor={i > 0}>{`  ${r.q}`}</Text> : null}
+            {r.error ? <Text color={BAD}>  ✗ {r.error}</Text> : null}
+            {r.words.map((x) => (
+              <Text key={x.w} dimColor={i > 0}>
+                {'  '}
+                <Text bold={i === 0}>{x.w.padEnd(w)}</Text>
+                {'  '}
+                {x.e ? (
+                  <>
+                    <Text color={BRAND} bold={i === 0}>
+                      /{x.e.ipa}/
+                    </Text>
+                    {x.e.alts?.length ? <Text color={MUTED}> · cũng đọc /{x.e.alts.join('/, /')}/</Text> : null}
+                    {x.e.src === 'rule' ? <Text color={MUTED}> (đoán theo chính tả)</Text> : null}
+                  </>
+                ) : (
+                  <Text color={MUTED}>— không tra được</Text>
+                )}
+              </Text>
+            ))}
+          </Box>
+        );
+      })}
+      <Keys
+        items={[
+          ['⏎', 'tra'],
+          ['esc', 'về màn chào'],
           ['^C', 'thoát'],
         ]}
       />
