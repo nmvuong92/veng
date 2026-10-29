@@ -172,6 +172,11 @@ export interface IpaEntry {
   src: 'dict' | 'rule';
 }
 
+export interface Suggestion {
+  word: string;
+  inDb: boolean;
+  meaning?: string;
+}
 /** Một từ trong kho (rút gọn từ /api/words/page). */
 export interface WordItem {
   id: string;
@@ -258,6 +263,9 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
     }) => call<Summary>(`${k}/summary`, body),
     vocab: (lines: { vi: string; answer: string }[]) => call<Vocab>(`${k}/vocab`, { lines }),
     reset: () => call<{ cycle: number }>(`${k}/reset`, {}),
+    /** Autocomplete: từ trong kho (kèm nghĩa) trước, rồi từ điển dwyl/english-words (inDb=false). */
+    suggest: (q: string) =>
+      call<{ items: Suggestion[] }>(`/words/suggest?q=${encodeURIComponent(q)}&limit=6`),
     /** Tìm trong kho từ vựng (khớp từ / nghĩa / ví dụ). */
     searchWords: (q: string) =>
       call<{ items: WordItem[]; total: number }>(`/words/page?q=${encodeURIComponent(q)}&limit=8`),

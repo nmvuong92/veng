@@ -10,6 +10,7 @@ import {
   type Feedback,
   type HistoryPage,
   type IpaEntry,
+  type Suggestion,
   type WordItem,
   type WordPreview,
   KINDS,
@@ -43,7 +44,18 @@ const FAINT = '#4a5260';
 /** Ô nhập một dòng, phím kiểu readline. Tự viết vì ink-text-input nuốt Ctrl+chữ thành ký tự. */
 function useLineEditor(value: string, onChange: (v: string) => void, active: boolean, mask = false) {
   const [cur, setCur] = useState(value.length);
-  useEffect(() => setCur((c) => Math.min(c, value.length)), [value]);
+  // Chữ đổi từ bên ngoài (điền gợi ý autocomplete) → con trỏ về cuối; tự gõ thì giữ vị trí.
+  const own = useRef(value);
+  const change = (v: string) => {
+    own.current = v;
+    onChange(v);
+  };
+  useEffect(() => {
+    if (value !== own.current) {
+      own.current = value;
+      setCur(value.length);
+    } else setCur((c) => Math.min(c, value.length));
+  }, [value]);
   // Con trỏ khối nhấp nháy ~530ms như terminal; gõ / di chuyển thì sáng lại và đếm nhịp từ đầu.
   const [on, setOn] = useState(true);
   // biome-ignore lint/correctness/useExhaustiveDependencies: value/cur chỉ để khởi động lại nhịp
@@ -60,26 +72,26 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
       if (key.rightArrow) return setCur((c) => Math.min(value.length, c + 1));
       if (key.backspace || key.delete) {
         if (cur === 0) return;
-        onChange(value.slice(0, cur - 1) + value.slice(cur));
+        change(value.slice(0, cur - 1) + value.slice(cur));
         return setCur(cur - 1);
       }
       if (key.ctrl) {
         if (input === 'a') return setCur(0);
         if (input === 'e') return setCur(value.length);
         if (input === 'u') {
-          onChange(value.slice(cur));
+          change(value.slice(cur));
           return setCur(0);
         }
         if (input === 'w') {
           const start = value.slice(0, cur).replace(/\S+\s*$/, '').length;
-          onChange(value.slice(0, start) + value.slice(cur));
+          change(value.slice(0, start) + value.slice(cur));
           return setCur(start);
         }
         return; // các Ctrl khác là phím tắt của màn hình
       }
       if (key.meta || !input) return;
       const text = input.replace(/[\r\n]+/g, ' ');
-      onChange(value.slice(0, cur) + text + value.slice(cur));
+      change(value.slice(0, cur) + text + value.slice(cur));
       setCur(cur + text.length);
     },
     { isActive: active },
@@ -1002,6 +1014,9 @@ function VocabView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
   const [phase, setPhase] = useState<VocabPhase>({ s: 'idle' });
   const typing = phase.s === 'idle' || phase.s === 'found' || phase.s === 'saved' || phase.s === 'error';
   const input = useLineEditor(q, setQ, typing);
+  // Vừa tìm xong (ô nhập vẫn là từ đó) thì khỏi gợi ý lại.
+  const justSearched = phase.s === 'found' && q.trim() === phase.q;
+  const sug = useSuggest(api, q.trim(), typing && !justSearched, (w) => setQ(w));
 
   const search = (text: string) => {
     const query = text.trim();
@@ -1049,7 +1064,9 @@ function VocabView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
     if (!key.return) return;
     // Chưa có trong kho, ô nhập vẫn là từ vừa tìm → ⏎ = đồng ý thêm bằng AI.
     if (phase.s === 'found' && !phase.exact && q.trim() === phase.q) return preview(phase.q);
-    search(q);
+    const picked = sug.pick();
+    if (picked) setQ(picked);
+    search(picked ?? q);
   });
 
   const hint: [string, string][] =
@@ -1078,7 +1095,10 @@ function VocabView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
           {typing ? input : <Text color={MUTED}>{q}</Text>}
         </Text>
       </Box>
-      {phase.s === 'idle' ? <Text color={MUTED}>  Gõ một từ tiếng Anh rồi ⏎ để tìm trong kho.</Text> : null}
+      <SuggestList items={sug.items} sel={sug.sel} />
+      {phase.s === 'idle' && !sug.items.length ? (
+        <Text color={MUTED}>  Gõ một từ tiếng Anh rồi ⏎ để tìm trong kho.</Text>
+      ) : null}
       {phase.s === 'busy' ? (
         <Text color={BRAND}>
           {'  '}
@@ -1188,6 +1208,63 @@ function PreviewCard({ phase }: { phase: Extract<VocabPhase, { s: 'preview' }> }
   );
 }
 
+/**
+ * Autocomplete chung (IPA, Từ vựng): gợi ý theo `token` (gõ ≥2 chữ), hoãn 150ms.
+ * ↑↓ chọn · Tab điền (mục đang chọn, mặc định mục đầu) · `pick()` lấy mục đã chọn bằng ↑↓ cho ⏎.
+ */
+function useSuggest(api: Client, token: string, active: boolean, accept: (word: string) => void) {
+  const [items, setItems] = useState<Suggestion[]>([]);
+  const [sel, setSel] = useState(-1);
+  useEffect(() => {
+    setSel(-1);
+    const t = token.toLowerCase();
+    if (!active || t.length < 2) return setItems([]);
+    let live = true;
+    const id = setTimeout(() => {
+      api
+        .suggest(t)
+        .then((r) => live && setItems(r.items.filter((s) => s.word.toLowerCase() !== t)))
+        .catch(() => live && setItems([]));
+    }, 150);
+    return () => {
+      live = false;
+      clearTimeout(id);
+    };
+  }, [api, token, active]);
+  useInput(
+    (_ch, key) => {
+      if (!items.length) return;
+      if (key.downArrow) setSel((s) => (s + 1) % items.length);
+      if (key.upArrow) setSel((s) => (s <= 0 ? items.length - 1 : s - 1));
+      if (key.tab) {
+        const w = items[Math.max(0, sel)]?.word;
+        if (w) accept(w);
+      }
+    },
+    { isActive: active },
+  );
+  return { items, sel, pick: () => (sel >= 0 ? items[sel]?.word : undefined) };
+}
+
+function SuggestList({ items, sel }: { items: Suggestion[]; sel: number }) {
+  if (!items.length) return null;
+  const w = Math.max(...items.map((s) => s.word.length));
+  return (
+    <Box flexDirection="column" marginLeft={2}>
+      {items.map((s, i) => (
+        <Text key={s.word} wrap="truncate-end">
+          <Text color={WARM}>{i === sel ? '▸ ' : '  '}</Text>
+          <Text bold={i === sel} color={i === sel ? WARM : undefined}>
+            {s.word.padEnd(w)}
+          </Text>
+          {s.inDb ? <Text color={MUTED}>  {s.meaning}</Text> : <Text color={FAINT}>  · chưa có trong kho</Text>}
+        </Text>
+      ))}
+      <Text color={MUTED}>  tab điền · ↑↓ chọn</Text>
+    </Box>
+  );
+}
+
 type IpaResult = { q: string; words: { w: string; e?: IpaEntry }[]; error?: string };
 
 /**
@@ -1201,13 +1278,18 @@ function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
   const [results, setResults] = useState<IpaResult[]>([]);
   const [loading, setLoading] = useState(false);
   const input = useLineEditor(q, setQ, !loading);
+  // Gợi ý cho từ cuối đang gõ — gõ cả câu vẫn gợi ý được.
+  const token = q.match(/[A-Za-z]+$/)?.[0] ?? '';
+  const sug = useSuggest(api, token, !loading, (w) => setQ(`${q.slice(0, q.length - token.length)}${w} `));
   useInput((ch, key) => {
     if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
     if (key.escape) return onBack();
     if (!key.return || loading) return;
-    const words = (q.match(/[A-Za-z][A-Za-z'-]*/g) ?? []).slice(0, 30);
+    const picked = sug.pick();
+    const text = picked ? q.slice(0, q.length - token.length) + picked : q;
+    const words = (text.match(/[A-Za-z][A-Za-z'-]*/g) ?? []).slice(0, 30);
     if (!words.length) return;
-    const query = q.trim();
+    const query = text.trim();
     setLoading(true);
     api
       .ipa(words)
@@ -1234,7 +1316,10 @@ function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
           )}
         </Text>
       </Box>
-      {!results.length ? <Text color={MUTED}>  Gõ một từ hoặc cả câu tiếng Anh rồi ⏎.</Text> : null}
+      <SuggestList items={sug.items} sel={sug.sel} />
+      {!results.length && !sug.items.length ? (
+        <Text color={MUTED}>  Gõ một từ hoặc cả câu tiếng Anh rồi ⏎.</Text>
+      ) : null}
       {results.map((r, i) => {
         const w = Math.max(...r.words.map((x) => x.w.length), 4);
         return (
