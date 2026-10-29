@@ -41,6 +41,7 @@ Biến môi trường (ghi đè file cấu hình): `VENG_API_KEY`, `VENG_API_URL
 | `Ctrl+N` | đề khác |
 | `Ctrl+U` | trên câu đã chấm: viết lại (câu đã chấm là chỉ đọc) |
 | `Ctrl+T` | đổi màu khung câu đang làm (vàng · ngọc · tím · xanh · hồng · bạc), nhớ cho lần sau |
+| `Ctrl+F` | popup tra từ (IPA, nghĩa, thêm bằng AI) — bài đang làm giữ nguyên; `Ctrl+F`/`Esc` để đóng |
 | `Ctrl+L` | lịch sử: `↑↓` chọn bài · `⏎` xem từng câu · `r` học lại · `Tab` cần cải thiện / tất cả · `←→` trang · `Esc` quay lại |
 | `Esc` | đóng gợi ý / câu mẫu · không mở gì thì lưu bài, về menu |
 | `Ctrl+C` | lưu bài dở rồi thoát |

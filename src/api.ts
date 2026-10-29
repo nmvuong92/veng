@@ -69,6 +69,30 @@ export function clearConfig() {
   if (existsSync(CONFIG_PATH)) rmSync(CONFIG_PATH);
 }
 
+/** Lịch sử tra từ trên máy này (mới nhất trước) — ~/.config/veng/lookups.json. */
+export interface Lookup {
+  q: string;
+  /** Nghĩa nếu lúc tra từ có trong kho. */
+  meaning?: string;
+}
+const LOOKUPS_PATH = join(DIR, 'lookups.json');
+export function loadLookups(): Lookup[] {
+  try {
+    const v = JSON.parse(readFileSync(LOOKUPS_PATH, 'utf8'));
+    return Array.isArray(v) ? v.filter((x) => typeof x?.q === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+export function saveLookup(entry: Lookup): Lookup[] {
+  const next = [entry, ...loadLookups().filter((x) => x.q.toLowerCase() !== entry.q.toLowerCase())].slice(0, 30);
+  try {
+    mkdirSync(DIR, { recursive: true, mode: 0o700 });
+    writeFileSync(LOOKUPS_PATH, `${JSON.stringify(next, null, 1)}\n`);
+  } catch {}
+  return next;
+}
+
 export const defaultUrl = () => process.env.VENG_API_URL || DEFAULT_URL;
 
 export interface DrillLine {
@@ -197,6 +221,20 @@ export interface FamilyEntry {
   level: 'core' | 'common' | 'extended';
   examples?: string[];
 }
+/** Chi tiết một từ trong kho (GET /api/words/:id) — như trang từ vựng trên web. */
+export interface WordDetail {
+  id: string;
+  word: string;
+  meaning: string;
+  pos?: string | null;
+  posAuto?: string | null;
+  note?: string | null;
+  ipa?: string | null;
+  example?: string | null;
+  chunks?: { chunk: string; vi: string; example?: string | null }[];
+  familyWords?: { entries?: FamilyEntry[]; antonyms?: FamilyEntry[] } | null;
+  synonyms?: { word: string; pos: string; vi: string; example: string; note: string }[] | null;
+}
 export interface WordPreview {
   mode: string;
   data: { root: string; entries: FamilyEntry[]; antonyms: FamilyEntry[]; synonyms: { word: string; vi: string }[] };
@@ -266,6 +304,7 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
     /** Autocomplete: từ trong kho (kèm nghĩa) trước, rồi từ điển dwyl/english-words (inDb=false). */
     suggest: (q: string) =>
       call<{ items: Suggestion[] }>(`/words/suggest?q=${encodeURIComponent(q)}&limit=8`),
+    wordDetail: (id: string) => call<WordDetail>(`/words/${encodeURIComponent(id)}`),
     /** Tìm trong kho từ vựng (khớp từ / nghĩa / ví dụ). */
     searchWords: (q: string) =>
       call<{ items: WordItem[]; total: number }>(`/words/page?q=${encodeURIComponent(q)}&limit=8`),

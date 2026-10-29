@@ -11,8 +11,12 @@ import {
   type HistoryPage,
   type IpaEntry,
   type Suggestion,
+  type WordDetail,
   type WordItem,
   type WordPreview,
+  type Lookup,
+  loadLookups,
+  saveLookup,
   KINDS,
   type Kind,
   linesOf,
@@ -90,7 +94,10 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
         return; // các Ctrl khác là phím tắt của màn hình
       }
       if (key.meta || !input) return;
-      const text = input.replace(/[\r\n]+/g, ' ');
+      // Dán nhiều dòng → một dòng; bỏ ký tự điều khiển (dán chung ^U… vào thì Ink coi là chữ thường).
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: chính là để lọc ký tự điều khiển
+      const text = input.replace(/[\r\n]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '');
+      if (!text) return;
       change(value.slice(0, cur) + text + value.slice(cur));
       setCur(cur + text.length);
     },
@@ -523,6 +530,7 @@ function KeysHelp({ frame }: { frame: string }) {
       [
         ['^N', 'đề khác'],
         ['^L', 'lịch sử'],
+        ['^F', 'tra từ (popup, bài vẫn giữ)'],
         ['^X', 'luyện lại từ đầu (khi hết kho)'],
       ],
     ],
@@ -610,8 +618,7 @@ const SPLASH_MS = 2100;
 /** Hai mục ngay dưới logo ở màn chào. */
 const HOME = [
   { id: 'practice', label: 'Luyện tập', desc: 'dịch Việt → Anh, AI chấm · 14 loại' },
-  { id: 'ipa', label: 'IPA', desc: 'gõ từ tiếng Anh → phiên âm' },
-  { id: 'vocab', label: 'Từ vựng', desc: 'tra kho từ · chưa có thì thêm bằng AI' },
+  { id: 'vocab', label: 'Từ vựng', desc: 'tra từ · IPA · chưa có thì thêm bằng AI' },
 ] as const;
 type HomeId = (typeof HOME)[number]['id'];
 
@@ -698,7 +705,7 @@ function Splash({
           <Keys
             items={[
               ['↑↓', 'chọn'],
-              ['1–3', 'nhảy tới'],
+              ['1 2', 'nhảy tới'],
               ['⏎', 'vào'],
               ['^C', 'thoát'],
             ]}
@@ -879,7 +886,7 @@ export function App({ cfg }: { cfg: Config }) {
   const { exit } = useApp();
   const [kind, setKind] = useState<Kind | null>(null);
   /** home = màn chào + 2 mục · kinds = chọn loại luyện · ipa = tra phiên âm. */
-  const [screen, setScreen] = useState<'home' | 'kinds' | 'ipa' | 'vocab'>('home');
+  const [screen, setScreen] = useState<'home' | 'kinds' | 'vocab'>('home');
   const seenHome = useRef(false);
   const pickHome = useCallback((id: HomeId) => {
     seenHome.current = true;
@@ -919,7 +926,6 @@ export function App({ cfg }: { cfg: Config }) {
     const total = Object.values(progress).reduce((n, st) => n + st.lines, 0);
     return <Splash lines={total || null} onPick={pickHome} instant={seenHome.current} />;
   }
-  if (screen === 'ipa') return <IpaView cfg={cfg} onBack={goHome} />;
   if (screen === 'vocab') return <VocabView cfg={cfg} onBack={goHome} />;
   if (kind) return <Practice key={kind.id} cfg={cfg} kind={kind} onBack={() => setKind(null)} />;
   return (
@@ -971,25 +977,132 @@ function Bolded({ text }: { text: string }) {
   );
 }
 
-function WordCard({ w }: { w: WordItem }) {
+/** Một mục gắn nhãn bên trái (ví dụ, họ từ…) — nhãn mờ, nội dung thụt đều. */
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <Box flexDirection="column" marginTop={1}>
+      <Text color={MUTED}>  {title}</Text>
+      <Box flexDirection="column" marginLeft={4}>
+        {children}
+      </Box>
+    </Box>
+  );
+}
+
+const stripSlash = (ipa: string) => ipa.replace(/^\/|\/$/g, '');
+const POS_VI: Record<string, string> = {
+  noun: 'danh từ',
+  verb: 'động từ',
+  adjective: 'tính từ',
+  adverb: 'trạng từ',
+  phrase: 'cụm',
+};
+
+/** Thẻ từ đầy đủ như trang từ vựng trên web: IPA, nghĩa, định nghĩa, ví dụ, họ từ, đồng/trái nghĩa, cụm. */
+function DetailCard({ d, cmu }: { d: WordDetail; cmu?: IpaEntry }) {
+  const fam = d.familyWords;
+  const core =
+    fam?.entries?.find((e) => e.word.toLowerCase() === d.word.toLowerCase()) ??
+    fam?.entries?.find((e) => e.level === 'core');
+  const family = (fam?.entries ?? []).filter((e) => e !== core).slice(0, 6);
+  const ipa = d.ipa ? stripSlash(d.ipa) : cmu?.ipa;
+  const pos = (d.pos || d.posAuto || core?.pos || '')
+    .split(',')
+    .filter(Boolean)
+    .map((p) => POS_VI[p.trim()] ?? p.trim())
+    .join(' · ');
+  const examples = [...new Set([d.example, ...(core?.examples ?? [])].filter((x): x is string => !!x))].slice(0, 3);
+  return (
+    <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={BRAND} paddingX={1}>
       <Text>
-        {'  '}
         <Text bold color={BRAND}>
-          {w.word}
+          {d.word}
         </Text>
-        {w.ipa ? <Text color={MUTED}> /{w.ipa.replace(/^\/|\/$/g, '')}/</Text> : null}
-        {w.pos ? <Text color={MUTED}> · {w.pos}</Text> : null}
-        {w.known ? <Text color={BRAND}> · đã thuộc ✓</Text> : null}
+        {ipa ? <Text color={WARM}>  /{ipa}/</Text> : null}
+        {cmu?.alts?.length ? <Text color={MUTED}> · cũng đọc /{cmu.alts.join('/, /')}/</Text> : null}
+        {pos ? <Text color={MUTED}>  {pos}</Text> : null}
       </Text>
-      <Text>{`  ${w.meaning}`}</Text>
-      {w.example ? (
-        <Text color={MUTED}>
-          {'  '}
-          <Bolded text={w.example} />
-        </Text>
+      <Text bold>{d.meaning}</Text>
+      {core?.definition_en ? <Text color={MUTED}>{core.definition_en}</Text> : null}
+      {examples.length ? (
+        <Section title="ví dụ">
+          {examples.map((ex) => (
+            <Bolded key={ex} text={ex} />
+          ))}
+        </Section>
       ) : null}
+      {family.length ? (
+        <Section title="họ từ">
+          {family.map((e) => (
+            <Text key={`${e.word}-${e.pos}`}>
+              <Text bold>{e.word}</Text>
+              <Text color={MUTED}>
+                {' '}
+                {POS_VI[e.pos] ?? e.pos}
+              </Text>{' '}
+              — {e.meaning_vi}
+            </Text>
+          ))}
+        </Section>
+      ) : null}
+      {d.synonyms?.length ? (
+        <Section title="đồng nghĩa">
+          {d.synonyms.slice(0, 3).map((x) => (
+            <Box key={x.word} flexDirection="column">
+              <Text>
+                <Text bold>{x.word}</Text> — {x.vi}
+                {x.note ? <Text color={MUTED}> · {x.note}</Text> : null}
+              </Text>
+              {x.example ? <Text color={MUTED}>  {x.example}</Text> : null}
+            </Box>
+          ))}
+        </Section>
+      ) : null}
+      {fam?.antonyms?.length ? (
+        <Section title="trái nghĩa">
+          <Text>{fam.antonyms.map((e) => `${e.word} (${e.meaning_vi})`).join(' · ')}</Text>
+        </Section>
+      ) : null}
+      {d.chunks?.length ? (
+        <Section title="cụm hay dùng">
+          {d.chunks.slice(0, 5).map((c) => (
+            <Text key={c.chunk}>
+              <Text bold>{c.chunk}</Text>
+              {c.vi ? <Text color={MUTED}> — {c.vi}</Text> : null}
+            </Text>
+          ))}
+        </Section>
+      ) : null}
+      {d.note ? (
+        <Section title="ghi chú">
+          <Text>{d.note}</Text>
+        </Section>
+      ) : null}
+    </Box>
+  );
+}
+
+/** IPA từng từ (CMUdict, từ lạ espeak đoán) — cho câu / cụm chưa có trong kho. */
+function IpaTable({ rows }: { rows: { w: string; e?: IpaEntry }[] }) {
+  const w = Math.max(4, ...rows.map((x) => x.w.length));
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      {rows.map((x) => (
+        <Text key={x.w}>
+          {'  '}
+          <Text bold>{x.w.padEnd(w)}</Text>
+          {'  '}
+          {x.e ? (
+            <>
+              <Text color={WARM}>/{x.e.ipa}/</Text>
+              {x.e.alts?.length ? <Text color={MUTED}> · cũng đọc /{x.e.alts.join('/, /')}/</Text> : null}
+              {x.e.src === 'rule' ? <Text color={MUTED}> (đoán theo chính tả)</Text> : null}
+            </>
+          ) : (
+            <Text color={MUTED}>— không tra được</Text>
+          )}
+        </Text>
+      ))}
     </Box>
   );
 }
@@ -997,38 +1110,80 @@ function WordCard({ w }: { w: WordItem }) {
 type VocabPhase =
   | { s: 'idle' }
   | { s: 'busy'; msg: string }
-  | { s: 'found'; q: string; exact: WordItem | null; others: WordItem[] }
+  | {
+      s: 'found';
+      q: string;
+      detail: WordDetail | null;
+      others: WordItem[];
+      ipa: { w: string; e?: IpaEntry }[];
+    }
   | { s: 'preview'; q: string; p: WordPreview; useFix: boolean }
   | { s: 'saved'; word: string }
   | { s: 'error'; msg: string };
 
+const tokensOf = (text: string) => (text.match(/[A-Za-z][A-Za-z'-]*/g) ?? []).slice(0, 30);
+const ipaKey = (w: string) => w.toLowerCase().replace(/^'+|'+$/g, '');
+
 /**
- * Từ vựng: gõ từ → tìm trong kho. Chưa có thì hỏi "Thêm bằng AI?" → Gemini soạn thẻ (CHƯA lưu)
- * → xem trước, gõ sai chính tả thì AI gợi ý từ đúng (mặc định lưu từ đúng), đã có trong kho thì
- * cảnh báo → ⏎ mới lưu. Cùng endpoint với nút "Thêm từ" trên web.
+ * Từ vựng (gộp cả IPA): gõ từ / cụm / câu → có trong kho thì thẻ đầy đủ + IPA; chưa có thì IPA
+ * từng từ + hỏi "Thêm bằng AI?" → xem trước (gợi ý sửa chính tả, cảnh báo trùng) → ⏎ mới lưu.
+ * Lịch sử tra lưu trên máy (lookups.json), ô trống thì hiện để chọn lại.
  */
-function VocabView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
+function VocabView({
+  cfg,
+  onBack,
+  embedded = false,
+}: {
+  cfg: Config;
+  onBack: () => void;
+  /** Mở như popup trong trang luyện (^F): bỏ tiêu đề riêng, ^F / esc là đóng. */
+  embedded?: boolean;
+}) {
   const { exit } = useApp();
   const api = useRef(client(cfg)).current;
   const [q, setQ] = useState('');
   const [phase, setPhase] = useState<VocabPhase>({ s: 'idle' });
+  const [recent, setRecent] = useState<Lookup[]>(() => loadLookups());
   const typing = phase.s === 'idle' || phase.s === 'found' || phase.s === 'saved' || phase.s === 'error';
   const input = useLineEditor(q, setQ, typing);
-  // Vừa tìm xong (ô nhập vẫn là từ đó) thì khỏi gợi ý lại.
+  // Vừa tra xong (ô nhập vẫn là chữ đó) thì khỏi gợi ý lại.
   const justSearched = phase.s === 'found' && q.trim() === phase.q;
-  const sug = useSuggest(api, q.trim(), typing && !justSearched, (w) => setQ(w));
+  // Gợi ý theo từ cuối đang gõ — gõ cả câu (để xem IPA) vẫn gợi ý được.
+  const token = q.match(/[A-Za-z]+$/)?.[0] ?? '';
+  const sug = useSuggest(
+    api,
+    q.trim() ? token : '',
+    typing && !justSearched,
+    (w) => setQ(`${q.slice(0, q.length - token.length)}${w}`),
+    recent.slice(0, 8).map((r) => ({ word: r.q, inDb: !!r.meaning, meaning: r.meaning })),
+  );
 
-  const search = (text: string) => {
+  const lookup = (text: string) => {
     const query = text.trim();
     if (!query) return;
-    setPhase({ s: 'busy', msg: 'đang tìm trong kho…' });
-    api
-      .searchWords(query)
-      .then((r) => {
+    setPhase({ s: 'busy', msg: 'đang tra…' });
+    const toks = tokensOf(query);
+    Promise.all([
+      api.searchWords(query),
+      toks.length
+        ? api.ipa(toks).catch(() => ({ words: {} as Record<string, IpaEntry> }))
+        : { words: {} as Record<string, IpaEntry> },
+    ])
+      .then(async ([r, ip]) => {
         const exact = r.items.find((w) => w.word.trim().toLowerCase() === query.toLowerCase()) ?? null;
+        const detail = exact ? await api.wordDetail(exact.id).catch(() => null) : null;
         // Chỉ giữ từ mà chính nó chứa chữ đang tìm — /words/page khớp cả nghĩa, ví dụ nên rất nhiễu.
-        const hit = (w: WordItem) => w !== exact && w.word.toLowerCase().includes(query.toLowerCase());
-        setPhase({ s: 'found', q: query, exact, others: r.items.filter(hit).slice(0, 5) });
+        const others = r.items
+          .filter((w) => w !== exact && w.word.toLowerCase().includes(query.toLowerCase()))
+          .slice(0, 5);
+        setRecent(saveLookup({ q: exact?.word ?? query, meaning: exact?.meaning }));
+        setPhase({
+          s: 'found',
+          q: query,
+          detail,
+          others,
+          ipa: toks.map((w) => ({ w, e: ip.words[ipaKey(w)] })),
+        });
       })
       .catch((e) => setPhase({ s: 'error', msg: (e as Error).message }));
   };
@@ -1045,6 +1200,7 @@ function VocabView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
       .createWord(word, p)
       .then(() => {
         setPhase({ s: 'saved', word });
+        setRecent(saveLookup({ q: word, meaning: p.data.entries[0]?.meaning_vi }));
         setQ('');
       })
       .catch((e) => setPhase({ s: 'error', msg: (e as Error).message }));
@@ -1052,6 +1208,7 @@ function VocabView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
 
   useInput((ch, key) => {
     if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
+    if (embedded && key.ctrl && ch === 'f') return onBack();
     if (phase.s === 'busy') return;
     if (phase.s === 'preview') {
       if (key.escape) return setPhase({ s: 'idle' });
@@ -1062,13 +1219,15 @@ function VocabView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
     }
     if (key.escape) return onBack();
     if (!key.return) return;
-    // Chưa có trong kho, ô nhập vẫn là từ vừa tìm → ⏎ = đồng ý thêm bằng AI.
-    if (phase.s === 'found' && !phase.exact && q.trim() === phase.q) return preview(phase.q);
+    // Chưa có trong kho, ô nhập vẫn là chữ vừa tra → ⏎ = đồng ý thêm bằng AI.
+    if (phase.s === 'found' && !phase.detail && q.trim() === phase.q) return preview(phase.q);
     const picked = sug.pick();
-    if (picked) setQ(picked);
-    search(picked ?? q);
+    const text = picked ? (sug.recent ? picked : `${q.slice(0, q.length - token.length)}${picked}`) : q;
+    if (picked) setQ(text);
+    lookup(text);
   });
 
+  const canAdd = phase.s === 'found' && !phase.detail && q.trim() === phase.q;
   const hint: [string, string][] =
     phase.s === 'preview'
       ? [
@@ -1076,28 +1235,37 @@ function VocabView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
           ...(phase.p.suggested ? ([['tab', 'đổi chữ lưu']] as [string, string][]) : []),
           ['esc', 'huỷ'],
         ]
-      : phase.s === 'found' && !phase.exact && q.trim() === phase.q
+      : canAdd
         ? [
             ['⏎', 'thêm bằng AI'],
-            ['esc', 'về màn chào'],
+            ['esc', embedded ? 'đóng, về bài' : 'về màn chào'],
           ]
         : [
-            ['⏎', 'tìm'],
-            ['esc', 'về màn chào'],
+            ['⏎', 'tra'],
+            ['esc', embedded ? 'đóng, về bài' : 'về màn chào'],
           ];
 
   return (
-    <Box flexDirection="column" paddingX={1}>
-      <Header stats={null} title="Từ vựng · tra kho, thêm bằng AI" />
+    <Box flexDirection="column" paddingX={embedded ? 0 : 1}>
+      {embedded ? (
+        <Text>
+          <Text color={WARM} bold>
+            ▍Tra từ
+          </Text>
+          <Text color={MUTED}> · bài đang làm vẫn giữ nguyên · ^F hoặc esc để đóng</Text>
+        </Text>
+      ) : (
+        <Header stats={null} title="Từ vựng · tra từ, IPA, thêm bằng AI" />
+      )}
       <Box borderStyle="round" borderColor={WARM} paddingX={1}>
         <Text>
           <Text color={WARM}>› </Text>
           {typing ? input : <Text color={MUTED}>{q}</Text>}
         </Text>
       </Box>
-      <SuggestList items={sug.items} sel={sug.sel} q={sug.q} />
+      <SuggestList items={sug.items} sel={sug.sel} q={sug.q} recent={sug.recent} />
       {phase.s === 'idle' && !sug.items.length ? (
-        <Text color={MUTED}>  Gõ một từ tiếng Anh rồi ⏎ để tìm trong kho.</Text>
+        <Text color={MUTED}>  Gõ một từ, cụm hoặc cả câu tiếng Anh rồi ⏎ — tra kho + IPA.</Text>
       ) : null}
       {phase.s === 'busy' ? (
         <Text color={BRAND}>
@@ -1107,21 +1275,24 @@ function VocabView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
       ) : null}
       {phase.s === 'error' ? <Text color={BAD}>  ✗ {phase.msg}</Text> : null}
       {phase.s === 'saved' ? <Text color={BRAND}>  ✓ Đã thêm "{phase.word}" vào kho — trên web có ngay.</Text> : null}
-      {phase.s === 'found' ? (
+      {phase.s === 'found' && !sug.items.length ? (
         <>
-          {phase.exact ? (
-            <WordCard w={phase.exact} />
+          {phase.detail ? (
+            <DetailCard d={phase.detail} cmu={phase.ipa.length === 1 ? phase.ipa[0]?.e : undefined} />
           ) : (
-            <Box marginTop={1}>
-              <Text>
-                {'  '}Chưa có <Text bold>"{phase.q}"</Text> trong kho. <Text color={WARM}>Thêm bằng AI? ⏎ có</Text>
-                <Text color={MUTED}> · gõ từ khác để tìm tiếp</Text>
-              </Text>
-            </Box>
+            <>
+              <IpaTable rows={phase.ipa} />
+              <Box marginTop={1}>
+                <Text>
+                  {'  '}Chưa có <Text bold>"{phase.q}"</Text> trong kho. <Text color={WARM}>Thêm bằng AI? ⏎ có</Text>
+                  <Text color={MUTED}> · gõ chữ khác để tra tiếp</Text>
+                </Text>
+              </Box>
+            </>
           )}
           {phase.others.length ? (
             <Box flexDirection="column" marginTop={1}>
-              <Text color={MUTED}>  {phase.exact ? 'cũng liên quan' : 'gần giống trong kho'}</Text>
+              <Text color={MUTED}>  {phase.detail ? 'cũng liên quan' : 'gần giống trong kho'}</Text>
               {phase.others.map((w) => (
                 <Text key={w.id}>
                   {'    '}
@@ -1212,30 +1383,40 @@ function PreviewCard({ phase }: { phase: Extract<VocabPhase, { s: 'preview' }> }
  * Autocomplete chung (IPA, Từ vựng): gợi ý theo `token` (gõ ≥2 chữ), hoãn 150ms.
  * ↑↓ chọn · Tab điền (mục đang chọn, mặc định mục đầu) · `pick()` lấy mục đã chọn bằng ↑↓ cho ⏎.
  */
-function useSuggest(api: Client, token: string, active: boolean, accept: (word: string) => void) {
-  const [items, setItems] = useState<Suggestion[]>([]);
+function useSuggest(
+  api: Client,
+  token: string,
+  active: boolean,
+  accept: (word: string) => void,
+  /** Hiện khi chưa gõ gì (vd lịch sử đã tra). */
+  fallback: Suggestion[] = [],
+) {
+  const [fetched, setFetched] = useState<Suggestion[]>([]);
+  /** -1 = không chọn mục nào → ⏎ dùng đúng chữ đã gõ. */
   const [sel, setSel] = useState(-1);
+  const t = token.toLowerCase();
   useEffect(() => {
     setSel(-1);
-    const t = token.toLowerCase();
-    if (!active || t.length < 2) return setItems([]);
+    if (!active || t.length < 2) return setFetched([]);
     let live = true;
     const id = setTimeout(() => {
       api
         .suggest(t)
-        .then((r) => live && setItems(r.items.filter((s) => s.word.toLowerCase() !== t)))
-        .catch(() => live && setItems([]));
+        .then((r) => live && setFetched(r.items.filter((s) => s.word.toLowerCase() !== t)))
+        .catch(() => live && setFetched([]));
     }, 150);
     return () => {
       live = false;
       clearTimeout(id);
     };
-  }, [api, token, active]);
+  }, [api, t, active]);
+  const items = !active ? [] : t ? fetched : fallback;
   useInput(
     (_ch, key) => {
       if (!items.length) return;
-      if (key.downArrow) setSel((s) => (s + 1) % items.length);
-      if (key.upArrow) setSel((s) => (s <= 0 ? items.length - 1 : s - 1));
+      // Vòng -1 → 0 … n-1 → -1: luôn quay lại được "không chọn" (giữ chữ đã gõ).
+      if (key.downArrow) setSel((s) => (s >= items.length - 1 ? -1 : s + 1));
+      if (key.upArrow) setSel((s) => (s <= -1 ? items.length - 1 : s - 1));
       if (key.tab) {
         const w = items[Math.max(0, sel)]?.word;
         if (w) accept(w);
@@ -1243,7 +1424,7 @@ function useSuggest(api: Client, token: string, active: boolean, accept: (word: 
     },
     { isActive: active },
   );
-  return { items, sel, q: token, pick: () => (sel >= 0 ? items[sel]?.word : undefined) };
+  return { items, sel, q: token, recent: !t, pick: () => (sel >= 0 ? items[sel]?.word : undefined) };
 }
 
 /** Tô sáng đoạn khớp với chữ đang gõ (lần xuất hiện đầu, không phân biệt hoa/thường). */
@@ -1272,12 +1453,23 @@ function clip(text: string, q: string, n: number): string {
   return `${start ? '…' : ''}${cut}…`;
 }
 
-function SuggestList({ items, sel, q }: { items: Suggestion[]; sel: number; q: string }) {
+function SuggestList({
+  items,
+  sel,
+  q,
+  recent = false,
+}: {
+  items: Suggestion[];
+  sel: number;
+  q: string;
+  recent?: boolean;
+}) {
   if (!items.length) return null;
   const shown = items.map((s) => clip(s.word, q, SUGGEST_W));
   const w = Math.max(...shown.map((t) => t.length));
   return (
     <Box flexDirection="column" marginLeft={2}>
+      {recent ? <Text color={MUTED}>  đã tra gần đây</Text> : null}
       {items.map((s, i) => (
         <Text key={s.word} wrap="truncate-end">
           <Text color={WARM}>{i === sel ? '▸ ' : '  '}</Text>
@@ -1286,100 +1478,13 @@ function SuggestList({ items, sel, q }: { items: Suggestion[]; sel: number; q: s
           {s.inDb ? <Text color={MUTED}>  {s.meaning}</Text> : <Text color={FAINT}>  · chưa có trong kho</Text>}
         </Text>
       ))}
-      <Text color={MUTED}>  tab điền · ↑↓ chọn</Text>
-    </Box>
-  );
-}
-
-type IpaResult = { q: string; words: { w: string; e?: IpaEntry }[]; error?: string };
-
-/**
- * Tra IPA: gõ một từ (hoặc cả câu) → phiên âm từng từ. Không gọi AI — CMUdict, từ lạ thì
- * espeak đoán theo chính tả; server nhớ trong DB nên từ nào cũng chỉ tra một lần.
- */
-function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
-  const { exit } = useApp();
-  const api = useRef(client(cfg)).current;
-  const [q, setQ] = useState('');
-  const [results, setResults] = useState<IpaResult[]>([]);
-  const [loading, setLoading] = useState(false);
-  const input = useLineEditor(q, setQ, !loading);
-  // Gợi ý cho từ cuối đang gõ — gõ cả câu vẫn gợi ý được.
-  const token = q.match(/[A-Za-z]+$/)?.[0] ?? '';
-  const sug = useSuggest(api, token, !loading, (w) => setQ(`${q.slice(0, q.length - token.length)}${w} `));
-  useInput((ch, key) => {
-    if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
-    if (key.escape) return onBack();
-    if (!key.return || loading) return;
-    const picked = sug.pick();
-    const text = picked ? q.slice(0, q.length - token.length) + picked : q;
-    const words = (text.match(/[A-Za-z][A-Za-z'-]*/g) ?? []).slice(0, 30);
-    if (!words.length) return;
-    const query = text.trim();
-    setLoading(true);
-    api
-      .ipa(words)
-      .then((r) => ({ q: query, words: words.map((w) => ({ w, e: r.words[w.toLowerCase().replace(/^'+|'+$/g, '')] })) }))
-      .catch((e) => ({ q: query, words: [], error: (e as Error).message }))
-      .then((res) => {
-        setResults((p) => [res, ...p].slice(0, 6));
-        setQ('');
-        setLoading(false);
-      });
-  });
-  return (
-    <Box flexDirection="column" paddingX={1}>
-      <Header stats={null} title="IPA · phiên âm tiếng Anh" />
-      <Box borderStyle="round" borderColor={WARM} paddingX={1}>
-        <Text>
-          <Text color={WARM}>› </Text>
-          {loading ? (
-            <Text color={MUTED}>
-              <Spinner type="dots" /> đang tra…
-            </Text>
-          ) : (
-            input
-          )}
-        </Text>
-      </Box>
-      <SuggestList items={sug.items} sel={sug.sel} q={sug.q} />
-      {!results.length && !sug.items.length ? (
-        <Text color={MUTED}>  Gõ một từ hoặc cả câu tiếng Anh rồi ⏎.</Text>
-      ) : null}
-      {results.map((r, i) => {
-        const w = Math.max(...r.words.map((x) => x.w.length), 4);
-        return (
-          <Box key={`${i}-${r.q}`} flexDirection="column" marginTop={1}>
-            {r.words.length > 1 ? <Text color={MUTED} dimColor={i > 0}>{`  ${r.q}`}</Text> : null}
-            {r.error ? <Text color={BAD}>  ✗ {r.error}</Text> : null}
-            {r.words.map((x) => (
-              <Text key={x.w} dimColor={i > 0}>
-                {'  '}
-                <Text bold={i === 0}>{x.w.padEnd(w)}</Text>
-                {'  '}
-                {x.e ? (
-                  <>
-                    <Text color={BRAND} bold={i === 0}>
-                      /{x.e.ipa}/
-                    </Text>
-                    {x.e.alts?.length ? <Text color={MUTED}> · cũng đọc /{x.e.alts.join('/, /')}/</Text> : null}
-                    {x.e.src === 'rule' ? <Text color={MUTED}> (đoán theo chính tả)</Text> : null}
-                  </>
-                ) : (
-                  <Text color={MUTED}>— không tra được</Text>
-                )}
-              </Text>
-            ))}
-          </Box>
-        );
-      })}
-      <Keys
-        items={[
-          ['⏎', 'tra'],
-          ['esc', 'về màn chào'],
-          ['^C', 'thoát'],
-        ]}
-      />
+      <Text color={MUTED}>
+        {sel >= 0
+          ? `  ⏎ dùng "${items[sel]?.word}" · ↑↓ về "${q || '…'}" để giữ chữ đã gõ`
+          : recent
+            ? '  ↑↓ chọn từ đã tra · ⏎ tra lại'
+            : `  ⏎ tìm "${q}" · ↓ chọn gợi ý · tab điền`}
+      </Text>
     </Box>
   );
 }
@@ -1665,7 +1770,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const [hint, setHint] = useState(0);
   const [vocab, setVocab] = useState<Vocab | 'loading' | { error: string } | null>(null);
   const [reveal, setReveal] = useState(false);
-  const [view, setView] = useState<'drill' | 'history'>('drill');
+  const [view, setView] = useState<'drill' | 'history' | 'lookup'>('drill');
   const [frameIdx, setFrameIdx] = useState(() => Math.max(0, FRAMES.findIndex((f) => f.name === cfg.frame)));
   const frame = FRAMES[frameIdx] ?? FRAMES[0]!;
   /** ^K: bảng phím tắt đầy đủ; mặc định chỉ một dòng gợi ý theo tình huống. */
@@ -1872,6 +1977,8 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     if (key.ctrl && (input === 'c' || input === 'd')) return void quit();
     if (view !== 'drill') return;
     if (key.ctrl && input === 'l') return setView('history');
+    // ^F: popup tra từ — Practice vẫn mounted nên câu đang gõ, kết quả chấm, câu đang chọn giữ nguyên.
+    if (key.ctrl && input === 'f') return setView('lookup');
     if (key.ctrl && input === 'k') return setShowKeys((v) => !v);
     if (key.ctrl && input === 't') {
       const next = (frameIdx + 1) % FRAMES.length;
@@ -1946,6 +2053,17 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
       return next;
     });
 
+  if (view === 'lookup') {
+    return (
+      <Box flexDirection="column" paddingX={1}>
+        <Header stats={stats} kind={kind} />
+        <Box borderStyle="round" borderColor={frame.color} paddingX={1} flexDirection="column">
+          <VocabView cfg={cfg} embedded onBack={() => setView('drill')} />
+        </Box>
+      </Box>
+    );
+  }
+
   if (view === 'history') {
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -1980,6 +2098,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
               ['tab', 'gợi ý'],
               ['↑↓', 'đổi câu'],
             ]) as [string, string][]),
+    ['^F', 'tra từ'],
     ['^K', 'phím tắt'],
   ];
 
