@@ -635,6 +635,7 @@ function KeysHelp({ frame }: { frame: string }) {
         ['^L', 'lịch sử'],
         ['^F', 'tra từ (popup, bài vẫn giữ)'],
         ['^G', 'Việt → Anh: Google + AI'],
+        ['^P', 'IPA — không tốn token'],
         ['^X', 'luyện lại từ đầu (khi hết kho)'],
       ],
     ],
@@ -1236,6 +1237,80 @@ const LEVEL_COLOR: Record<string, string> = {
  * ^G — tra nhanh Việt → Anh, một lần ⏎ là đủ: Google Translate + AI (2–3 cách nói, mức độ
  * thông dụng) + từ trong kho có nghĩa khớp. Server cache vĩnh viễn nên tra lại không tốn token.
  */
+/**
+ * ^P — tra IPA nhanh, KHÔNG tốn token: chỉ từ điển phát âm (CMUdict, từ lạ espeak đoán theo
+ * chính tả), server nhớ trong DB. Gõ từ / cụm / câu → IPA từng từ; có gợi ý autocomplete.
+ */
+function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
+  const { exit } = useApp();
+  const api = useRef(client(cfg)).current;
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [results, setResults] = useState<{ q: string; rows: { w: string; e?: IpaEntry }[]; error?: string }[]>([]);
+  const input = useLineEditor(q, setQ, !busy);
+  const token = q.match(/[A-Za-z]+$/)?.[0] ?? '';
+  const sug = useSuggest(api, token, !busy, (w) => setQ(`${q.slice(0, q.length - token.length)}${w} `));
+  useInput((ch, key) => {
+    if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
+    if (key.escape || (key.ctrl && ch === 'p')) return onBack();
+    if (!key.return || busy) return;
+    const picked = sug.pick();
+    const text = (picked ? q.slice(0, q.length - token.length) + picked : q).trim();
+    const toks = tokensOf(text);
+    if (!toks.length) return;
+    setBusy(true);
+    api
+      .ipa(toks)
+      .then((r) => ({ q: text, rows: toks.map((w) => ({ w, e: r.words[ipaKey(w)] })) }))
+      .catch((e) => ({ q: text, rows: [], error: (e as Error).message }))
+      .then((x) => {
+        setResults((p) => [x, ...p.filter((y) => y.q !== text)].slice(0, 3));
+        setQ('');
+        setBusy(false);
+      });
+  });
+  return (
+    <Box flexDirection="column">
+      <Text>
+        <Text color={WARM} bold>
+          ▍IPA
+        </Text>
+        <Text color={MUTED}> · từ điển phát âm, không tốn token · ^P hoặc esc để đóng</Text>
+      </Text>
+      <Box borderStyle="round" borderColor={WARM} paddingX={1}>
+        <Text color={WARM}>› </Text>
+        {busy ? (
+          <Text color={MUTED}>
+            <Spinner type="dots" /> đang tra…
+          </Text>
+        ) : (
+          input
+        )}
+      </Box>
+      <SuggestList items={sug.items} sel={sug.sel} q={sug.q} />
+      {!results.length && !busy && !sug.items.length ? (
+        <Text color={MUTED}>  Gõ từ, cụm hoặc cả câu tiếng Anh rồi ⏎.</Text>
+      ) : null}
+      {results.map((x, i) => (
+        <Box key={x.q} flexDirection="column">
+          {x.rows.length > 1 || x.error ? (
+            <Box marginTop={1}>
+              <Text dimColor={i > 0}>  {x.q}</Text>
+            </Box>
+          ) : null}
+          {x.error ? <Text color={BAD}>    ✗ {x.error}</Text> : <IpaTable rows={x.rows} />}
+        </Box>
+      ))}
+      <Keys
+        items={[
+          ['⏎', 'tra'],
+          ['esc', 'đóng, về bài'],
+        ]}
+      />
+    </Box>
+  );
+}
+
 function ViEnView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () => void; embedded?: boolean }) {
   const { exit } = useApp();
   const api = useRef(client(cfg)).current;
@@ -2009,7 +2084,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const [hint, setHint] = useState(0);
   const [vocab, setVocab] = useState<Vocab | 'loading' | { error: string } | null>(null);
   const [reveal, setReveal] = useState(false);
-  const [view, setView] = useState<'drill' | 'history' | 'lookup' | 'vien'>('drill');
+  const [view, setView] = useState<'drill' | 'history' | 'lookup' | 'vien' | 'ipa'>('drill');
   const [frameIdx, setFrameIdx] = useState(() => Math.max(0, FRAMES.findIndex((f) => f.name === cfg.frame)));
   const frame = FRAMES[frameIdx] ?? FRAMES[0]!;
   /** ^K: bảng phím tắt đầy đủ; mặc định chỉ một dòng gợi ý theo tình huống. */
@@ -2220,6 +2295,8 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     if (key.ctrl && input === 'f') return setView('lookup');
     // ^G: popup tra Việt → Anh (Google + AI) — bài vẫn giữ nguyên như ^F.
     if (key.ctrl && input === 'g') return setView('vien');
+    // ^P: popup tra IPA (không AI, không tốn token). ^I không dùng được: terminal gửi giống Tab.
+    if (key.ctrl && input === 'p') return setView('ipa');
     if (key.ctrl && input === 'k') return setShowKeys((v) => !v);
     if (key.ctrl && input === 't') {
       const next = (frameIdx + 1) % FRAMES.length;
@@ -2294,6 +2371,17 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
       return next;
     });
 
+  if (view === 'ipa') {
+    return (
+      <Box flexDirection="column" paddingX={1}>
+        <Header stats={stats} kind={kind} />
+        <Box borderStyle="round" borderColor={frame.color} paddingX={1} flexDirection="column">
+          <IpaView cfg={cfg} onBack={() => setView('drill')} />
+        </Box>
+      </Box>
+    );
+  }
+
   if (view === 'vien') {
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -2352,6 +2440,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
             ]) as [string, string][]),
     ['^F', 'tra từ'],
     ['^G', 'Việt→Anh'],
+    ['^P', 'IPA'],
     ['^K', 'phím tắt'],
   ];
 
