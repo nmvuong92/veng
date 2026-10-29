@@ -172,6 +172,35 @@ export interface IpaEntry {
   src: 'dict' | 'rule';
 }
 
+/** Một từ trong kho (rút gọn từ /api/words/page). */
+export interface WordItem {
+  id: string;
+  word: string;
+  meaning: string;
+  ipa?: string | null;
+  example?: string | null;
+  pos?: string | null;
+  known?: boolean;
+}
+/** Một mục trong "lexical family" Gemini soạn cho từ mới. */
+export interface FamilyEntry {
+  word: string;
+  pos: string;
+  meaning_vi: string;
+  definition_en?: string;
+  ipa?: string | null;
+  level: 'core' | 'common' | 'extended';
+  examples?: string[];
+}
+export interface WordPreview {
+  mode: string;
+  data: { root: string; entries: FamilyEntry[]; antonyms: FamilyEntry[]; synonyms: { word: string; vi: string }[] };
+  /** Gõ sai chính tả → từ đúng AI đã hiểu ("analized" → "analyze"). */
+  suggested?: string | null;
+  /** Từ đã gõ / từ gợi ý đã có sẵn trong kho. */
+  existing?: { id: string; word: string; meaning: string }[];
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -229,6 +258,23 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
     }) => call<Summary>(`${k}/summary`, body),
     vocab: (lines: { vi: string; answer: string }[]) => call<Vocab>(`${k}/vocab`, { lines }),
     reset: () => call<{ cycle: number }>(`${k}/reset`, {}),
+    /** Tìm trong kho từ vựng (khớp từ / nghĩa / ví dụ). */
+    searchWords: (q: string) =>
+      call<{ items: WordItem[]; total: number }>(`/words/page?q=${encodeURIComponent(q)}&limit=8`),
+    /** Gemini soạn thẻ từ mới — CHƯA lưu, để xem trước. */
+    previewWord: (word: string) =>
+      call<WordPreview>('/words/preview-enrichment', { word, groupSlug: groupOf(word) }),
+    /** Lưu thẻ từ đã xem trước — y như nút Lưu trên web. */
+    createWord: (word: string, preview: WordPreview) => {
+      const core = preview.data.entries.find((e) => e.level === 'core') ?? preview.data.entries[0];
+      return call<{ id: string }>('/words', {
+        word,
+        meaning: core?.meaning_vi || '(no meaning)',
+        groupSlug: groupOf(word),
+        examples: core?.examples ?? [],
+        enrichment: preview.data,
+      });
+    },
     /** Tra IPA (không AI, server nhớ trong DB) — dùng lại endpoint trang Shadowing. */
     ipa: (words: string[]) => call<{ words: Record<string, IpaEntry> }>('/shadowing/ipa', { words }),
     history: (filter: 'weak' | 'all', page: number, pageSize: number) =>
@@ -236,6 +282,9 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
   };
 }
 export type Client = ReturnType<typeof client>;
+
+/** Nhóm như web: có dấu cách là cụm, còn lại là từ đơn trong kho cốt lõi. */
+const groupOf = (word: string) => (/\s/.test(word.trim()) ? 'phrase' : 'core');
 
 /** Đề cũ chỉ có một câu thì bọc lại thành mảng — giống web. */
 export const linesOf = (d: Drill): DrillLine[] =>

@@ -10,6 +10,8 @@ import {
   type Feedback,
   type HistoryPage,
   type IpaEntry,
+  type WordItem,
+  type WordPreview,
   KINDS,
   type Kind,
   linesOf,
@@ -597,6 +599,7 @@ const SPLASH_MS = 2100;
 const HOME = [
   { id: 'practice', label: 'Luyện tập', desc: 'dịch Việt → Anh, AI chấm · 14 loại' },
   { id: 'ipa', label: 'IPA', desc: 'gõ từ tiếng Anh → phiên âm' },
+  { id: 'vocab', label: 'Từ vựng', desc: 'tra kho từ · chưa có thì thêm bằng AI' },
 ] as const;
 type HomeId = (typeof HOME)[number]['id'];
 
@@ -683,7 +686,7 @@ function Splash({
           <Keys
             items={[
               ['↑↓', 'chọn'],
-              ['1 2', 'nhảy tới'],
+              ['1–3', 'nhảy tới'],
               ['⏎', 'vào'],
               ['^C', 'thoát'],
             ]}
@@ -864,11 +867,11 @@ export function App({ cfg }: { cfg: Config }) {
   const { exit } = useApp();
   const [kind, setKind] = useState<Kind | null>(null);
   /** home = màn chào + 2 mục · kinds = chọn loại luyện · ipa = tra phiên âm. */
-  const [screen, setScreen] = useState<'home' | 'kinds' | 'ipa'>('home');
+  const [screen, setScreen] = useState<'home' | 'kinds' | 'ipa' | 'vocab'>('home');
   const seenHome = useRef(false);
   const pickHome = useCallback((id: HomeId) => {
     seenHome.current = true;
-    setScreen(id === 'ipa' ? 'ipa' : 'kinds');
+    setScreen(id === 'practice' ? 'kinds' : id);
   }, []);
   const goHome = useCallback(() => setScreen('home'), []);
   const [cur, setCur] = useState(() => Math.max(0, KINDS.findIndex((k) => k.id === cfg.lastKind)));
@@ -905,6 +908,7 @@ export function App({ cfg }: { cfg: Config }) {
     return <Splash lines={total || null} onPick={pickHome} instant={seenHome.current} />;
   }
   if (screen === 'ipa') return <IpaView cfg={cfg} onBack={goHome} />;
+  if (screen === 'vocab') return <VocabView cfg={cfg} onBack={goHome} />;
   if (kind) return <Practice key={kind.id} cfg={cfg} kind={kind} onBack={() => setKind(null)} />;
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -933,6 +937,253 @@ export function App({ cfg }: { cfg: Config }) {
           ['^C', 'thoát'],
         ]}
       />
+    </Box>
+  );
+}
+
+/** Câu ví dụ của Gemini có **đậm** quanh từ chính → in đậm trong terminal. */
+function Bolded({ text }: { text: string }) {
+  return (
+    <Text>
+      {text.split('**').map((part, i) =>
+        // biome-ignore lint/suspicious/noArrayIndexKey: mảnh chữ không có id riêng
+        i % 2 ? (
+          <Text key={i} bold color={BRAND}>
+            {part}
+          </Text>
+        ) : (
+          part
+        ),
+      )}
+    </Text>
+  );
+}
+
+function WordCard({ w }: { w: WordItem }) {
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text>
+        {'  '}
+        <Text bold color={BRAND}>
+          {w.word}
+        </Text>
+        {w.ipa ? <Text color={MUTED}> /{w.ipa.replace(/^\/|\/$/g, '')}/</Text> : null}
+        {w.pos ? <Text color={MUTED}> · {w.pos}</Text> : null}
+        {w.known ? <Text color={BRAND}> · đã thuộc ✓</Text> : null}
+      </Text>
+      <Text>{`  ${w.meaning}`}</Text>
+      {w.example ? (
+        <Text color={MUTED}>
+          {'  '}
+          <Bolded text={w.example} />
+        </Text>
+      ) : null}
+    </Box>
+  );
+}
+
+type VocabPhase =
+  | { s: 'idle' }
+  | { s: 'busy'; msg: string }
+  | { s: 'found'; q: string; exact: WordItem | null; others: WordItem[] }
+  | { s: 'preview'; q: string; p: WordPreview; useFix: boolean }
+  | { s: 'saved'; word: string }
+  | { s: 'error'; msg: string };
+
+/**
+ * Từ vựng: gõ từ → tìm trong kho. Chưa có thì hỏi "Thêm bằng AI?" → Gemini soạn thẻ (CHƯA lưu)
+ * → xem trước, gõ sai chính tả thì AI gợi ý từ đúng (mặc định lưu từ đúng), đã có trong kho thì
+ * cảnh báo → ⏎ mới lưu. Cùng endpoint với nút "Thêm từ" trên web.
+ */
+function VocabView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
+  const { exit } = useApp();
+  const api = useRef(client(cfg)).current;
+  const [q, setQ] = useState('');
+  const [phase, setPhase] = useState<VocabPhase>({ s: 'idle' });
+  const typing = phase.s === 'idle' || phase.s === 'found' || phase.s === 'saved' || phase.s === 'error';
+  const input = useLineEditor(q, setQ, typing);
+
+  const search = (text: string) => {
+    const query = text.trim();
+    if (!query) return;
+    setPhase({ s: 'busy', msg: 'đang tìm trong kho…' });
+    api
+      .searchWords(query)
+      .then((r) => {
+        const exact = r.items.find((w) => w.word.trim().toLowerCase() === query.toLowerCase()) ?? null;
+        // Chỉ giữ từ mà chính nó chứa chữ đang tìm — /words/page khớp cả nghĩa, ví dụ nên rất nhiễu.
+        const hit = (w: WordItem) => w !== exact && w.word.toLowerCase().includes(query.toLowerCase());
+        setPhase({ s: 'found', q: query, exact, others: r.items.filter(hit).slice(0, 5) });
+      })
+      .catch((e) => setPhase({ s: 'error', msg: (e as Error).message }));
+  };
+  const preview = (word: string) => {
+    setPhase({ s: 'busy', msg: `AI đang soạn thẻ "${word}"…` });
+    api
+      .previewWord(word)
+      .then((p) => setPhase({ s: 'preview', q: word, p, useFix: true }))
+      .catch((e) => setPhase({ s: 'error', msg: (e as Error).message }));
+  };
+  const save = (word: string, p: WordPreview) => {
+    setPhase({ s: 'busy', msg: `đang lưu "${word}"…` });
+    api
+      .createWord(word, p)
+      .then(() => {
+        setPhase({ s: 'saved', word });
+        setQ('');
+      })
+      .catch((e) => setPhase({ s: 'error', msg: (e as Error).message }));
+  };
+
+  useInput((ch, key) => {
+    if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
+    if (phase.s === 'busy') return;
+    if (phase.s === 'preview') {
+      if (key.escape) return setPhase({ s: 'idle' });
+      if (phase.p.suggested && (key.tab || key.leftArrow || key.rightArrow))
+        return setPhase({ ...phase, useFix: !phase.useFix });
+      if (key.return) save(phase.p.suggested && phase.useFix ? phase.p.suggested : phase.q, phase.p);
+      return;
+    }
+    if (key.escape) return onBack();
+    if (!key.return) return;
+    // Chưa có trong kho, ô nhập vẫn là từ vừa tìm → ⏎ = đồng ý thêm bằng AI.
+    if (phase.s === 'found' && !phase.exact && q.trim() === phase.q) return preview(phase.q);
+    search(q);
+  });
+
+  const hint: [string, string][] =
+    phase.s === 'preview'
+      ? [
+          ['⏎', 'lưu vào kho'],
+          ...(phase.p.suggested ? ([['tab', 'đổi chữ lưu']] as [string, string][]) : []),
+          ['esc', 'huỷ'],
+        ]
+      : phase.s === 'found' && !phase.exact && q.trim() === phase.q
+        ? [
+            ['⏎', 'thêm bằng AI'],
+            ['esc', 'về màn chào'],
+          ]
+        : [
+            ['⏎', 'tìm'],
+            ['esc', 'về màn chào'],
+          ];
+
+  return (
+    <Box flexDirection="column" paddingX={1}>
+      <Header stats={null} title="Từ vựng · tra kho, thêm bằng AI" />
+      <Box borderStyle="round" borderColor={WARM} paddingX={1}>
+        <Text>
+          <Text color={WARM}>› </Text>
+          {typing ? input : <Text color={MUTED}>{q}</Text>}
+        </Text>
+      </Box>
+      {phase.s === 'idle' ? <Text color={MUTED}>  Gõ một từ tiếng Anh rồi ⏎ để tìm trong kho.</Text> : null}
+      {phase.s === 'busy' ? (
+        <Text color={BRAND}>
+          {'  '}
+          <Spinner type="dots" /> {phase.msg}
+        </Text>
+      ) : null}
+      {phase.s === 'error' ? <Text color={BAD}>  ✗ {phase.msg}</Text> : null}
+      {phase.s === 'saved' ? <Text color={BRAND}>  ✓ Đã thêm "{phase.word}" vào kho — trên web có ngay.</Text> : null}
+      {phase.s === 'found' ? (
+        <>
+          {phase.exact ? (
+            <WordCard w={phase.exact} />
+          ) : (
+            <Box marginTop={1}>
+              <Text>
+                {'  '}Chưa có <Text bold>"{phase.q}"</Text> trong kho. <Text color={WARM}>Thêm bằng AI? ⏎ có</Text>
+                <Text color={MUTED}> · gõ từ khác để tìm tiếp</Text>
+              </Text>
+            </Box>
+          )}
+          {phase.others.length ? (
+            <Box flexDirection="column" marginTop={1}>
+              <Text color={MUTED}>  {phase.exact ? 'cũng liên quan' : 'gần giống trong kho'}</Text>
+              {phase.others.map((w) => (
+                <Text key={w.id}>
+                  {'    '}
+                  <Text bold>{w.word}</Text>
+                  <Text color={MUTED}> — {w.meaning}</Text>
+                </Text>
+              ))}
+            </Box>
+          ) : null}
+        </>
+      ) : null}
+      {phase.s === 'preview' ? <PreviewCard phase={phase} /> : null}
+      <Keys items={hint} />
+    </Box>
+  );
+}
+
+/** Xem trước thẻ AI soạn: gợi ý sửa chính tả, cảnh báo trùng, nghĩa + ví dụ + họ từ. */
+function PreviewCard({ phase }: { phase: Extract<VocabPhase, { s: 'preview' }> }) {
+  const { p, q, useFix } = phase;
+  const core = p.data.entries.find((e) => e.level === 'core') ?? p.data.entries[0];
+  const family = p.data.entries.filter((e) => e !== core);
+  const saveAs = p.suggested && useFix ? p.suggested : q;
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      {p.suggested ? (
+        <Box flexDirection="column" borderStyle="round" borderColor={WARM} paddingX={1}>
+          <Text>
+            Có phải ý bạn là <Text bold color={BRAND}>{p.suggested}</Text>? <Text color={MUTED}>(bạn gõ "{q}")</Text>
+          </Text>
+          <Text>
+            <Text color={useFix ? WARM : MUTED}>{useFix ? '●' : '○'} lưu là {p.suggested}</Text>
+            {'    '}
+            <Text color={!useFix ? WARM : MUTED}>{!useFix ? '●' : '○'} giữ "{q}"</Text>
+          </Text>
+        </Box>
+      ) : null}
+      {p.existing?.length ? (
+        <Text color={BAD}>
+          {'  '}⚠ Đã có trong kho: {p.existing.map((e) => `${e.word} — ${e.meaning}`).join(' · ')} — lưu nữa sẽ thành thẻ trùng.
+        </Text>
+      ) : null}
+      {core ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text>
+            {'  '}
+            <Text bold color={BRAND}>
+              {saveAs}
+            </Text>
+            {core.ipa ? <Text color={MUTED}> /{core.ipa.replace(/^\/|\/$/g, '')}/</Text> : null}
+            <Text color={MUTED}> · {core.pos}</Text>
+          </Text>
+          <Text>{`  ${core.meaning_vi}`}</Text>
+          {core.definition_en ? <Text color={MUTED}>{`  ${core.definition_en}`}</Text> : null}
+          {core.examples?.map((ex) => (
+            <Text key={ex}>
+              {'  '}
+              <Bolded text={ex} />
+            </Text>
+          ))}
+        </Box>
+      ) : null}
+      {family.length ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color={MUTED}>  họ từ</Text>
+          {family.map((e) => (
+            <Text key={`${e.word}-${e.pos}`}>
+              {'    '}
+              <Text bold>{e.word}</Text>
+              <Text color={MUTED}>
+                {' '}
+                {e.pos} — {e.meaning_vi}
+              </Text>
+            </Text>
+          ))}
+        </Box>
+      ) : null}
+      {p.data.synonyms?.length ? (
+        <Text color={MUTED}>
+          {'  '}đồng nghĩa: {p.data.synonyms.map((s) => `${s.word} (${s.vi})`).join(' · ')}
+        </Text>
+      ) : null}
     </Box>
   );
 }
