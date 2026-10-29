@@ -33,6 +33,8 @@ export interface Config {
   lastKind?: string;
   /** Màu khung câu đang làm (^T đổi). */
   frame?: string;
+  /** Hiệu ứng kim tuyến khi gõ (^B bật/tắt) — mặc định bật. */
+  fx?: boolean;
 }
 
 export function loadConfig(): Config | null {
@@ -47,11 +49,12 @@ export function loadConfig(): Config | null {
     apiUrl: process.env.VENG_API_URL || file.apiUrl || DEFAULT_URL,
     lastKind: file.lastKind,
     frame: file.frame,
+    fx: file.fx,
   };
 }
 
 /** Ghi tuỳ chọn (loại lần trước, màu khung) vào file, không đụng key (key có thể đến từ biến môi trường). */
-export function savePrefs(prefs: Pick<Config, 'lastKind' | 'frame'>) {
+export function savePrefs(prefs: Pick<Config, 'lastKind' | 'frame' | 'fx'>) {
   try {
     const file = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
     saveConfig({ ...file, ...prefs });

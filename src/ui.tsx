@@ -48,8 +48,29 @@ const FRAMES = [
 const FAINT = '#4a5260';
 
 /** Ô nhập một dòng, phím kiểu readline. Tự viết vì ink-text-input nuốt Ctrl+chữ thành ký tự. */
+/** Hiệu ứng kim tuyến khi gõ — bật/tắt bằng ^B (lưu config). Module-level cho mọi ô nhập dùng chung. */
+const FX = { on: true };
+const FX_MS = 450;
+const GLITTER = ['✦', '✧', '⋆', '*', '✶', '·'];
+const GLITTER_COLORS = [WARM, BRAND, '#f472b6', '#f0c46a', '#7fd8c6', '#a78bfa'];
+
 function useLineEditor(value: string, onChange: (v: string) => void, active: boolean, mask = false) {
   const [cur, setCur] = useState(value.length);
+  // Kim tuyến: mỗi phím gõ bắn vài hạt sau con trỏ, trôi + rung rồi tắt sau FX_MS. Chỉ chạy
+  // trong FX_MS sau phím cuối → đứng yên thì không vẽ lại gì. Combo = số phím liền tay (<0,6s).
+  const [fx, setFx] = useState<{ at: number; seed: number } | null>(null);
+  const combo = useRef({ n: 0, last: 0 });
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!fx) return;
+    const id = setInterval(() => {
+      if (Date.now() - fx.at > FX_MS) {
+        clearInterval(id);
+        setFx(null);
+      } else tick((n) => n + 1);
+    }, 45);
+    return () => clearInterval(id);
+  }, [fx]);
   // Chữ + vị trí con trỏ "thật" nằm trong ref, cập nhật NGAY: Ink có thể gọi handler nhiều lần
   // liền trong một nhịp (bộ gõ chốt chữ "tình" rồi tới phím cách) trước khi React vẽ lại — đọc
   // từ props/state thì lần sau thấy chữ cũ và đè mất chữ vừa gõ.
@@ -117,6 +138,11 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
       // Dấu rời (e + ̂ + ̣) → một chữ "ệ", để con trỏ / ⌫ đếm đúng từng chữ.
       const head = v.slice(0, c).normalize('NFC');
       set(head + v.slice(c).normalize('NFC'), head.length);
+      if (FX.on && !mask && head.length > cur) {
+        const now = Date.now();
+        combo.current = { n: now - combo.current.last < 600 ? combo.current.n + 1 : 1, last: now };
+        setFx({ at: now, seed: Math.floor(Math.random() * 1000) });
+      }
     },
     { isActive: active },
   );
@@ -157,7 +183,11 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
   // mỗi 0,5s → terminal có hiệu ứng vệt con trỏ thì thấy nó "lướt" dài từ cuối màn hình lên.
   return (
     <Box ref={ref} flexGrow={1} flexShrink={1}>
-      <Text>{shown || ' '}</Text>
+      {fx && FX.on && !mask ? (
+        <Glitter text={shown} cur={cur} age={(Date.now() - fx.at) / FX_MS} seed={fx.seed} combo={combo.current.n} />
+      ) : (
+        <Text>{shown || ' '}</Text>
+      )}
     </Box>
   );
 }
@@ -179,6 +209,55 @@ function lineStyle(line: string, color?: string, bold = false, dim = false): str
   if (fg) out = out.replaceAll('\x1b[39m', `\x1b[39m${fg}`);
   if (weight) out = out.replaceAll('\x1b[22m', `\x1b[22m${weight}`);
   return `${weight}${fg}${out}${fg ? '\x1b[39m' : ''}${weight ? '\x1b[22m' : ''}`;
+}
+
+/**
+ * Chữ đang gõ + kim tuyến: chữ vừa gõ sáng vàng một thoáng; vài hạt ✦✧⋆ bắn ra sau con trỏ,
+ * trôi sang phải, rung qua lại một ô, nhạt thành "·" rồi tắt. Gõ liền tay ≥8 phím: nhiều hạt hơn + ⚡combo.
+ * Không rung chính chữ — lệch chữ thì con trỏ thật / chữ đang ghép của bộ gõ cũng lệch theo.
+ */
+function Glitter({ text, cur, age, seed, combo }: { text: string; cur: number; age: number; seed: number; combo: number }) {
+  const frame = Math.floor(age * 10);
+  const pop = age < 0.35 && cur > 0;
+  const atEnd = cur >= text.length;
+  const n = combo >= 8 ? 5 : 3;
+  let trail = '';
+  const sparks: { col: number; ch: string; color: string }[] = [];
+  if (atEnd) {
+    for (let k = 0; k < n; k++) {
+      const drift = 1 + k * 2 + Math.floor(age * 5);
+      const shake = (frame + k + seed) % 2; // rung qua lại một ô
+      const ch = age > 0.7 ? '·' : (GLITTER[(seed + k + frame) % GLITTER.length] as string);
+      sparks.push({ col: drift + shake, ch, color: GLITTER_COLORS[(seed + k * 2 + frame) % GLITTER_COLORS.length] as string });
+    }
+    const width = Math.max(...sparks.map((s) => s.col)) + 1;
+    trail = ' '.repeat(width);
+  }
+  const cells = [...trail];
+  for (const s of sparks) cells[s.col] = s.ch;
+  return (
+    <Text>
+      {pop ? text.slice(0, cur - 1) : text.slice(0, cur)}
+      {pop ? (
+        <Text color={WARM} bold>
+          {text[cur - 1]}
+        </Text>
+      ) : null}
+      {text.slice(cur) || (atEnd ? '' : ' ')}
+      {cells.map((ch, i) => {
+        const s = sparks.find((x) => x.col === i);
+        return s ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: ô cố định theo cột
+          <Text key={i} color={s.color} dimColor={age > 0.7}>
+            {ch}
+          </Text>
+        ) : (
+          ch
+        );
+      })}
+      {combo >= 8 && atEnd ? <Text color={WARM} bold>{`  ⚡${combo}`}</Text> : null}
+    </Text>
+  );
 }
 
 /** Dòng hai cột: dấu/số cố định bên trái, chữ bên phải — câu dài xuống dòng vẫn thẳng hàng với đầu câu. */
@@ -588,6 +667,7 @@ function KeysHelp({ frame }: { frame: string }) {
       'Giao diện',
       [
         ['^T', `màu khung (${frame})`],
+        ['^B', 'kim tuyến khi gõ: bật / tắt'],
         ['esc', 'đóng gợi ý · về menu'],
         ['^C', 'lưu & thoát'],
       ],
@@ -934,6 +1014,7 @@ function KindProgress({ st }: { st?: Stats }) {
 /** Mở veng: chọn loại luyện (con trỏ sẵn ở loại lần trước) → vào luyện; Esc trong bài → quay lại đây. */
 export function App({ cfg }: { cfg: Config }) {
   const { exit } = useApp();
+  FX.on = cfg.fx !== false;
   const [kind, setKind] = useState<Kind | null>(null);
   /** home = màn chào + 2 mục · kinds = chọn loại luyện · ipa = tra phiên âm. */
   const [screen, setScreen] = useState<'home' | 'kinds' | 'vocab'>('home');
@@ -1947,6 +2028,13 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const frame = FRAMES[frameIdx] ?? FRAMES[0]!;
   /** ^K: bảng phím tắt đầy đủ; mặc định chỉ một dòng gợi ý theo tình huống. */
   const [showKeys, setShowKeys] = useState(false);
+  /** Báo ngắn khi bấm ^B — tự tắt sau 1,5s. */
+  const [fxNote, setFxNote] = useState('');
+  useEffect(() => {
+    if (!fxNote) return;
+    const id = setTimeout(() => setFxNote(''), 1500);
+    return () => clearTimeout(id);
+  }, [fxNote]);
   /** Câu vừa chấm xong → chạy hiệu ứng đúng/sai; key đổi mỗi lần chấm để chạy lại từ đầu. */
   const [burst, setBurst] = useState<{ i: number; key: number } | null>(null);
   const streak = useRef(0);
@@ -2154,6 +2242,13 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     // ^G: popup tra Việt → Anh (Google + AI) — bài vẫn giữ nguyên như ^F.
     if (key.ctrl && input === 'g') return setView('vien');
     if (key.ctrl && input === 'k') return setShowKeys((v) => !v);
+    // ^B: bật / tắt kim tuyến khi gõ (lưu config).
+    if (key.ctrl && input === 'b') {
+      FX.on = !FX.on;
+      savePrefs({ fx: FX.on });
+      setFxNote(FX.on ? '✦ kim tuyến: bật' : 'kim tuyến: tắt');
+      return;
+    }
     if (key.ctrl && input === 't') {
       const next = (frameIdx + 1) % FRAMES.length;
       setFrameIdx(next);
@@ -2522,6 +2617,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
         </Text>
       ) : null}
       {error ? <Text color={BAD}>✗ {error}</Text> : null}
+      {fxNote ? <Text color={WARM}>{fxNote}</Text> : null}
       {showKeys ? <KeysHelp frame={frame.name} /> : <Keys items={quickKeys} />}
     </Box>
   );
