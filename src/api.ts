@@ -33,8 +33,6 @@ export interface Config {
   lastKind?: string;
   /** Màu khung câu đang làm (^T đổi). */
   frame?: string;
-  /** Hiệu ứng kim tuyến khi gõ (^B bật/tắt) — mặc định bật. */
-  fx?: boolean;
 }
 
 export function loadConfig(): Config | null {
@@ -49,12 +47,11 @@ export function loadConfig(): Config | null {
     apiUrl: process.env.VENG_API_URL || file.apiUrl || DEFAULT_URL,
     lastKind: file.lastKind,
     frame: file.frame,
-    fx: file.fx,
   };
 }
 
 /** Ghi tuỳ chọn (loại lần trước, màu khung) vào file, không đụng key (key có thể đến từ biến môi trường). */
-export function savePrefs(prefs: Pick<Config, 'lastKind' | 'frame' | 'fx'>) {
+export function savePrefs(prefs: Pick<Config, 'lastKind' | 'frame'>) {
   try {
     const file = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
     saveConfig({ ...file, ...prefs });
@@ -275,7 +272,12 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
     } catch {
       throw new ApiError('Không kết nối được server — kiểm tra mạng.', 0);
     }
-    const data = await res.json().catch(() => null);
+    const BAD = Symbol('bad');
+    const raw = await res.text().catch(() => '');
+    let data: any = BAD;
+    try {
+      data = raw ? JSON.parse(raw) : null;
+    } catch {}
     if (!res.ok) {
       const msg =
         res.status === 401 || res.status === 403
@@ -284,6 +286,11 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
             ? 'Chấm nhiều quá, server đang giới hạn — đợi vài phút.'
             : (data?.error ?? `Lỗi server (${res.status})`);
       throw new ApiError(msg, res.status);
+    }
+    // 200 mà không phải JSON (vd VENG_API_URL trỏ nhầm vào web / dev server khác) → báo rõ,
+    // đừng trả null để màn hình đọc null.lines rồi sập.
+    if (data === BAD) {
+      throw new ApiError(`Server trả về không phải JSON — kiểm tra VENG_API_URL (${cfg.apiUrl}).`, res.status);
     }
     return data as T;
   }

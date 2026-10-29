@@ -40,7 +40,6 @@ Biến môi trường (ghi đè file cấu hình): `VENG_API_KEY`, `VENG_API_URL
 | `Ctrl+R` | xem câu mẫu |
 | `Ctrl+N` | đề khác |
 | `Ctrl+U` | trên câu đã chấm: viết lại (câu đã chấm là chỉ đọc) |
-| `Ctrl+B` | kim tuyến khi gõ (hạt ✦ bắn sau con trỏ, rung rồi tắt; gõ liền tay có ⚡combo) — bật / tắt, nhớ cho lần sau |
 | `Ctrl+T` | đổi màu khung câu đang làm (vàng · ngọc · tím · xanh · hồng · bạc), nhớ cho lần sau |
 | `Ctrl+F` | popup tra từ (IPA, nghĩa, thêm bằng AI) — bài đang làm giữ nguyên; `Ctrl+F`/`Esc` để đóng |
 | `Ctrl+G` | popup tra Việt → Anh: Google Translate + AI (cách nói, mức độ thông dụng) + từ trong kho; bài giữ nguyên |
