@@ -71,15 +71,6 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
       setCur(value.length);
     }
   }, [value]);
-  // Con trỏ khối nhấp nháy ~530ms như terminal; gõ / di chuyển thì sáng lại và đếm nhịp từ đầu.
-  const [on, setOn] = useState(true);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: value/cur chỉ để khởi động lại nhịp
-  useEffect(() => {
-    setOn(true);
-    if (!active) return;
-    const id = setInterval(() => setOn((o) => !o), 530);
-    return () => clearInterval(id);
-  }, [value, cur, active]);
   useInput(
     (input, key) => {
       const value = val.current;
@@ -136,12 +127,13 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
   // hình nên chữ hiện lạc ra ngoài ô. Toạ độ = cộng dồn vị trí layout (Yoga) từ ô nhập lên gốc.
   const ref = useRef<DOMElement>(null);
   const { setCursorPosition } = useCursor();
-  useEffect(() => {
-    if (!active) return;
+  // Ink chỉ dùng vị trí đặt TRONG lúc render (đặt trong effect thì phải đợi lần vẽ sau mới thấy),
+  // nên tính ngay khi render, dựa trên layout của lần vẽ trước — ô nhập hầu như không đổi chỗ.
+  if (active && ref.current?.yogaNode) {
     let x = 0;
     let y = 0;
-    let node: DOMElement | undefined = ref.current ?? undefined;
-    const width = node?.yogaNode?.getComputedWidth() || 1;
+    let node: DOMElement | undefined = ref.current;
+    const width = node.yogaNode?.getComputedWidth() || 1;
     while (node?.yogaNode) {
       x += node.yogaNode.getComputedLeft();
       y += node.yogaNode.getComputedTop();
@@ -149,17 +141,23 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
     }
     // ponytail: xuống dòng tính theo ký tự (Ink ngắt theo từ) — câu dài lệch tối đa vài ô ở dòng sau.
     const col = stringWidth(shown.slice(0, cur));
-    setCursorPosition({ x: x + (col % width), y: y + Math.floor(col / width) });
-  });
+    // Ô nhập rộng đúng bằng chữ → con trỏ ngay sau ký tự cuối (col = width) vẫn CÙNG dòng.
+    const line = Math.floor(Math.max(0, col - 1) / width);
+    setCursorPosition({ x: x + col - line * width, y: y + line });
+  }
+  // Lần vẽ đầu chưa có layout → vẽ lại một lần cho con trỏ vào đúng chỗ.
+  const [, bump] = useState(0);
+  useEffect(() => {
+    if (active) bump((n) => n + 1);
+  }, [active]);
   useEffect(() => (active ? () => setCursorPosition(undefined) : undefined), [active, setCursorPosition]);
 
+  // Không vẽ con trỏ giả: con trỏ THẬT của terminal đã đứng đúng chỗ (useCursor ở trên), tự nhấp
+  // nháy theo kiểu người dùng cài trong terminal. Con trỏ giả nhấp nháy bắt vẽ lại cả màn hình
+  // mỗi 0,5s → terminal có hiệu ứng vệt con trỏ thì thấy nó "lướt" dài từ cuối màn hình lên.
   return (
     <Box ref={ref} flexGrow={1} flexShrink={1}>
-      <Text>
-        {shown.slice(0, cur)}
-        <Text inverse={on}>{shown[cur] ?? ' '}</Text>
-        {shown.slice(cur + 1)}
-      </Text>
+      <Text>{shown || ' '}</Text>
     </Box>
   );
 }
