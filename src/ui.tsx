@@ -1095,7 +1095,7 @@ function VocabView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
           {typing ? input : <Text color={MUTED}>{q}</Text>}
         </Text>
       </Box>
-      <SuggestList items={sug.items} sel={sug.sel} />
+      <SuggestList items={sug.items} sel={sug.sel} q={sug.q} />
       {phase.s === 'idle' && !sug.items.length ? (
         <Text color={MUTED}>  Gõ một từ tiếng Anh rồi ⏎ để tìm trong kho.</Text>
       ) : null}
@@ -1243,20 +1243,46 @@ function useSuggest(api: Client, token: string, active: boolean, accept: (word: 
     },
     { isActive: active },
   );
-  return { items, sel, pick: () => (sel >= 0 ? items[sel]?.word : undefined) };
+  return { items, sel, q: token, pick: () => (sel >= 0 ? items[sel]?.word : undefined) };
 }
 
-function SuggestList({ items, sel }: { items: Suggestion[]; sel: number }) {
+/** Tô sáng đoạn khớp với chữ đang gõ (lần xuất hiện đầu, không phân biệt hoa/thường). */
+function Highlight({ text, q, bold }: { text: string; q: string; bold?: boolean }) {
+  const i = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1;
+  if (i < 0) return <Text bold={bold}>{text}</Text>;
+  return (
+    <Text bold={bold}>
+      {text.slice(0, i)}
+      <Text color={BRAND} underline bold>
+        {text.slice(i, i + q.length)}
+      </Text>
+      {text.slice(i + q.length)}
+    </Text>
+  );
+}
+
+/** Cột từ tối đa chừng này ký tự — kho có cả câu dài, không thì đẩy cột nghĩa ra tận mép. */
+const SUGGEST_W = 28;
+/** Cắt chữ dài còn `n` ký tự, cố giữ đoạn khớp `q` trong phần hiện ra. */
+function clip(text: string, q: string, n: number): string {
+  if (text.length <= n) return text;
+  const i = text.toLowerCase().indexOf(q.toLowerCase());
+  const start = i + q.length > n - 1 ? Math.max(0, i - 6) : 0;
+  const cut = text.slice(start, start + n - (start ? 2 : 1));
+  return `${start ? '…' : ''}${cut}…`;
+}
+
+function SuggestList({ items, sel, q }: { items: Suggestion[]; sel: number; q: string }) {
   if (!items.length) return null;
-  const w = Math.max(...items.map((s) => s.word.length));
+  const shown = items.map((s) => clip(s.word, q, SUGGEST_W));
+  const w = Math.max(...shown.map((t) => t.length));
   return (
     <Box flexDirection="column" marginLeft={2}>
       {items.map((s, i) => (
         <Text key={s.word} wrap="truncate-end">
           <Text color={WARM}>{i === sel ? '▸ ' : '  '}</Text>
-          <Text bold={i === sel} color={i === sel ? WARM : undefined}>
-            {s.word.padEnd(w)}
-          </Text>
+          <Highlight text={shown[i] ?? s.word} q={q} bold={i === sel} />
+          {' '.repeat(w - (shown[i] ?? s.word).length)}
           {s.inDb ? <Text color={MUTED}>  {s.meaning}</Text> : <Text color={FAINT}>  · chưa có trong kho</Text>}
         </Text>
       ))}
@@ -1316,7 +1342,7 @@ function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
           )}
         </Text>
       </Box>
-      <SuggestList items={sug.items} sel={sug.sel} />
+      <SuggestList items={sug.items} sel={sug.sel} q={sug.q} />
       {!results.length && !sug.items.length ? (
         <Text color={MUTED}>  Gõ một từ hoặc cả câu tiếng Anh rồi ⏎.</Text>
       ) : null}
