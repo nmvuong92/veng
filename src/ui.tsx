@@ -1235,6 +1235,12 @@ const POS_VI: Record<string, string> = {
   adjective: 'tính từ',
   adverb: 'trạng từ',
   phrase: 'cụm',
+  pronoun: 'đại từ',
+  preposition: 'giới từ',
+  conjunction: 'liên từ',
+  interjection: 'thán từ',
+  article: 'mạo từ',
+  abbreviation: 'viết tắt',
 };
 
 /** Thẻ từ đầy đủ như trang từ vựng trên web: IPA, nghĩa, định nghĩa, ví dụ, họ từ, đồng/trái nghĩa, cụm. */
@@ -1369,7 +1375,13 @@ function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState<
-    { q: string; rows: { w: string; e?: IpaEntry }[]; vi?: string | null; error?: string }[]
+    {
+      q: string;
+      rows: { w: string; e?: IpaEntry }[];
+      vi?: string | null;
+      dict?: { pos: string; terms: string[] }[];
+      error?: string;
+    }[]
   >([]);
   const input = useLineEditor(q, setQ, !busy);
   const token = q.match(/[A-Za-z]+$/)?.[0] ?? '';
@@ -1385,8 +1397,15 @@ function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
     setBusy(true);
     // Google dịch lỗi thì thôi, IPA vẫn hiện.
     const vi = api.enVi(text).then((r) => r.translatedText, () => null);
-    Promise.all([api.ipa(toks), vi])
-      .then(([r, v]) => ({ q: text, rows: toks.map((w) => ({ w, e: r.words[ipaKey(w)] })), vi: v }))
+    // Một từ thì xem thêm loại từ + nghĩa theo từng loại.
+    const dict = toks.length === 1 ? api.dict(toks[0]!).then((r) => r.dict, () => []) : [];
+    Promise.all([api.ipa(toks), vi, dict])
+      .then(([r, v, d]) => ({
+        q: text,
+        rows: toks.map((w) => ({ w, e: r.words[ipaKey(w)] })),
+        vi: v,
+        dict: d,
+      }))
       .catch((e) => ({ q: text, rows: [], error: (e as Error).message }))
       .then((x) => {
         setResults((p) => [x, ...p.filter((y) => y.q !== text)].slice(0, 3));
@@ -1430,6 +1449,13 @@ function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
               <Text color={BRAND}>{x.vi}</Text>
             </Text>
           ) : null}
+          {x.dict?.map((d) => (
+            <Text key={d.pos} dimColor={i > 0}>
+              {'          '}
+              <Text color={WARM}>{(POS_VI[d.pos] ?? d.pos).padEnd(9)}</Text>
+              {d.terms.join(', ')}
+            </Text>
+          ))}
         </Box>
       ))}
       <Keys

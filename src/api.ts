@@ -381,6 +381,8 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
     ipa: (words: string[]) => call<{ words: Record<string, IpaEntry> }>('/shadowing/ipa', { words }),
     /** Google dịch Anh → Việt (miễn phí, server cache vĩnh viễn). */
     enVi: (text: string) => call<{ translatedText: string }>('/translate', { text }),
+    /** Từ điển Google Dịch cho 1 từ: loại từ + các nghĩa tiếng Việt (miễn phí, cache). */
+    dict: (word: string) => call<{ dict: { pos: string; terms: string[] }[] }>('/translate/dict', { word }),
     history: (filter: 'weak' | 'all', page: number, pageSize: number) =>
       call<HistoryPage>(`${k}/history?filter=${filter}&page=${page}&pageSize=${pageSize}`),
   };
