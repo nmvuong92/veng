@@ -320,7 +320,21 @@ function Header({ stats, kind, title }: { stats: Stats | null; kind?: Kind; titl
   );
 }
 
-/** Khối chấm: thanh dọc màu theo kết quả, gọn một cột — điểm, nhận xét, sửa lỗi, câu đúng, cách nói khác. */
+/** Từ bề rộng này (chữ trong khung câu) khối chấm chia 2 cột: lỗi bên trái, cách nói khác bên phải. */
+const TWO_COL = 120;
+
+/** Cách nói khác: câu mẫu (nếu khác câu đúng) + các cách AI gợi ý, bỏ trùng. */
+const altsOf = (fb: Feedback, sample: string) => {
+  const right = fb.corrected || sample;
+  return [...(norm(sample) !== norm(right) ? [sample] : []), ...(fb.natural ?? [])].filter(
+    (x, i, arr) => x && norm(x) !== norm(right) && arr.findIndex((y) => norm(y) === norm(x)) === i,
+  );
+};
+
+/**
+ * Khối chấm, quan trọng nhất lên trên: câu đúng → điểm → nhận xét + sửa lỗi; phụ (cách nói khác,
+ * giới từ, lưu ý vặt) xuống dưới — hoặc sang cột phải khi màn hình rộng.
+ */
 function FeedbackView({
   fb,
   sample,
@@ -337,58 +351,43 @@ function FeedbackView({
   lean?: boolean;
 }) {
   const right = fb.corrected || sample;
-  const alts = lean ? [] : [
-    ...(norm(sample) !== norm(right) ? [sample] : []),
-    ...(fb.natural ?? []),
-  ].filter((x, i, arr) => x && norm(x) !== norm(right) && arr.findIndex((y) => norm(y) === norm(x)) === i);
+  const alts = lean ? [] : altsOf(fb, sample);
+  const preps = lean ? [] : (fb.preps ?? []);
+  const style = lean ? '' : (fb.styleNote ?? '');
   const marked = fb.marked ? parseCritic(fb.marked) : null;
   const numbered = marked?.fixes.length ? marked.fixes : null;
-  // Câu đã nhập được AI đánh dấu (✎) rồi câu đúng (✓), thẳng cột với › để so từng chữ; nhận xét xuống dưới.
-  return (
-    <Box flexDirection="column" marginLeft={3}>
-      <Hang mark={<Text color={BRAND}>✓ </Text>} bold color={BRAND}>
-        {right}
-      </Hang>
-      {(lean ? [] : (fb.preps ?? [])).map((p) => (
-        <Hang key={p.phrase} indent={2} color={MUTED} mark={<Text color={MUTED}>· </Text>}>
-          <Text color={WARM}>{p.phrase}</Text> · {p.why}
-        </Hang>
-      ))}
-      <Box flexDirection="column" marginLeft={2} marginTop={1}>
-        <Text>
-          <ScoreDots fb={fb} />
-          {'   '}
-          <Check ok={fb.meaningOk} label="nghĩa" />
-          {'   '}
-          <Check ok={fb.tenseOk} label={axis} />
-        </Text>
-        <Text>{fb.comment}</Text>
-        {fb.tenseNote ? <Text color={BRAND}>⏱ {fb.tenseNote}</Text> : null}
-        {numbered ? (
-          <Box marginTop={1}>
-            <FixList fixes={numbered} />
-          </Box>
-        ) : fb.fixes?.length ? (
-          <Box flexDirection="column" marginTop={1}>
-            {fb.fixes.map((f) => (
-              <Text key={`${f.wrong}→${f.right}`}>
-                <Text color={BAD} strikethrough>
-                  {f.wrong}
-                </Text>
-                <Text color={MUTED}> → </Text>
-                <Text color={BRAND}>{f.right}</Text>
-                {f.why ? <Text color={MUTED}> · {f.why}</Text> : null}
-              </Text>
-            ))}
-          </Box>
-        ) : null}
-        {fb.styleNote && !lean ? <Text color={MUTED}>· {fb.styleNote}</Text> : null}
-      </Box>
-      {alts.length ? (
+  const hasSide = alts.length > 0 || preps.length > 0 || !!style;
+  const wide = width >= TWO_COL && hasSide;
+
+  const main = (
+    <Box flexDirection="column">
+      <Text>{fb.comment}</Text>
+      {fb.tenseNote ? <Text color={BRAND}>⏱ {fb.tenseNote}</Text> : null}
+      {numbered ? (
+        <Box marginTop={1}>
+          <FixList fixes={numbered} />
+        </Box>
+      ) : fb.fixes?.length ? (
         <Box flexDirection="column" marginTop={1}>
-          <Box marginLeft={2}>
-            <Text color={MUTED}>cách nói khác</Text>
-          </Box>
+          {fb.fixes.map((f) => (
+            <Text key={`${f.wrong}→${f.right}`}>
+              <Text color={BAD} strikethrough>
+                {f.wrong}
+              </Text>
+              <Text color={MUTED}> → </Text>
+              <Text color={BRAND}>{f.right}</Text>
+              {f.why ? <Text color={MUTED}> · {f.why}</Text> : null}
+            </Text>
+          ))}
+        </Box>
+      ) : null}
+    </Box>
+  );
+  const side = (
+    <Box flexDirection="column">
+      {alts.length ? (
+        <Box flexDirection="column">
+          <Text color={MUTED}>cách nói khác</Text>
           {alts.map((x) => (
             <Hang key={x} mark={<Text color={WARM}>≈ </Text>}>
               {x}
@@ -396,6 +395,48 @@ function FeedbackView({
           ))}
         </Box>
       ) : null}
+      {preps.length ? (
+        <Box flexDirection="column" marginTop={alts.length ? 1 : 0}>
+          {preps.map((p) => (
+            <Hang key={p.phrase} color={MUTED} mark={<Text color={MUTED}>· </Text>}>
+              <Text color={WARM}>{p.phrase}</Text> · {p.why}
+            </Hang>
+          ))}
+        </Box>
+      ) : null}
+      {style ? <Text color={MUTED}>· {style}</Text> : null}
+    </Box>
+  );
+
+  return (
+    <Box flexDirection="column" marginLeft={3}>
+      <Hang mark={<Text color={BRAND}>✓ </Text>} bold color={BRAND}>
+        {right}
+      </Hang>
+      <Box marginLeft={2}>
+        <Text>
+          <ScoreDots fb={fb} />
+          {'   '}
+          <Check ok={fb.meaningOk} label="nghĩa" />
+          {'   '}
+          <Check ok={fb.tenseOk} label={axis} />
+        </Text>
+      </Box>
+      {wide ? (
+        <Box marginLeft={2} marginTop={1} gap={4}>
+          <Box width="50%" flexShrink={0}>
+            {main}
+          </Box>
+          <Box flexGrow={1} flexShrink={1}>
+            {side}
+          </Box>
+        </Box>
+      ) : (
+        <Box flexDirection="column" marginLeft={2} marginTop={1}>
+          {main}
+          {hasSide ? <Box marginTop={1}>{side}</Box> : null}
+        </Box>
+      )}
       {lean ? (
         <Box marginLeft={2}>
           <Text color={MUTED}>… thu gọn cho vừa màn hình (kéo giãn cửa sổ để xem đủ)</Text>
@@ -2249,16 +2290,27 @@ function useTermSize() {
 /** Chiều cao (ước lượng) của khối nhận xét — để biết đoạn có vừa màn hình không. */
 function feedbackRows(fb: Feedback, sample: string, w: number, lean = false): number {
   const right = fb.corrected || sample;
-  let n = 1 + rowsOf(fb.comment, w);
-  if (fb.tenseNote) n += rowsOf(fb.tenseNote, w);
-  if (fb.fixes?.length) n += 1 + fb.fixes.reduce((k, f) => k + rowsOf(`${f.wrong} → ${f.right} · ${f.why}`, w), 0);
-  n += 1 + rowsOf(right, w - 2);
-  if (lean) return n + 1;
-  for (const p of fb.preps ?? []) n += rowsOf(`${p.phrase} · ${p.why}`, w - 2);
-  const alts = (fb.natural ?? []).length + (norm(sample) !== norm(right) ? 1 : 0);
-  if (alts) n += 2 + alts * rowsOf(right, w - 2);
-  if (fb.styleNote) n += 1;
-  return n;
+  const head = rowsOf(right, w - 2) + 2; // câu đúng + dòng điểm + dòng trống
+  const mainRows = (mw: number) => {
+    let n = rowsOf(fb.comment, mw);
+    if (fb.tenseNote) n += rowsOf(fb.tenseNote, mw);
+    if (fb.fixes?.length) n += 1 + fb.fixes.reduce((k, f) => k + rowsOf(`${f.wrong} → ${f.right} · ${f.why}`, mw), 0);
+    return n;
+  };
+  if (lean) return head + mainRows(w - 2) + 1;
+  const alts = altsOf(fb, sample);
+  const sideRows = (sw: number) => {
+    let n = alts.length ? 1 + alts.reduce((k, x) => k + rowsOf(x, sw - 2), 0) : 0;
+    if (fb.preps?.length) n += (n ? 1 : 0) + fb.preps.reduce((k, p) => k + rowsOf(`${p.phrase} · ${p.why}`, sw - 2), 0);
+    if (fb.styleNote) n += rowsOf(fb.styleNote, sw);
+    return n;
+  };
+  if (w >= TWO_COL && sideRows(w) > 0) {
+    const mw = Math.floor((w - 2) * 0.5);
+    return head + Math.max(mainRows(mw), sideRows(w - 2 - mw - 4));
+  }
+  const side = sideRows(w - 2);
+  return head + mainRows(w - 2) + (side ? 1 + side : 0);
 }
 
 function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () => void }) {
