@@ -72,26 +72,25 @@ export function clearConfig() {
   if (existsSync(CONFIG_PATH)) rmSync(CONFIG_PATH);
 }
 
-/** Lịch sử tra từ trên máy này (mới nhất trước) — ~/.config/veng/lookups.json. */
+/** Lịch sử tra trên máy này (mới nhất trước) — ~/.config/veng/lookups.json (tra từ), ipa-lookups.json (^P). */
 export interface Lookup {
   q: string;
   /** Nghĩa nếu lúc tra từ có trong kho. */
   meaning?: string;
 }
-const LOOKUPS_PATH = join(DIR, 'lookups.json');
-export function loadLookups(): Lookup[] {
+export function loadLookups(file = 'lookups.json'): Lookup[] {
   try {
-    const v = JSON.parse(readFileSync(LOOKUPS_PATH, 'utf8'));
+    const v = JSON.parse(readFileSync(join(DIR, file), 'utf8'));
     return Array.isArray(v) ? v.filter((x) => typeof x?.q === 'string') : [];
   } catch {
     return [];
   }
 }
-export function saveLookup(entry: Lookup): Lookup[] {
-  const next = [entry, ...loadLookups().filter((x) => x.q.toLowerCase() !== entry.q.toLowerCase())].slice(0, 30);
+export function saveLookup(entry: Lookup, file = 'lookups.json'): Lookup[] {
+  const next = [entry, ...loadLookups(file).filter((x) => x.q.toLowerCase() !== entry.q.toLowerCase())].slice(0, 30);
   try {
     mkdirSync(DIR, { recursive: true, mode: 0o700 });
-    writeFileSync(LOOKUPS_PATH, `${JSON.stringify(next, null, 1)}\n`);
+    writeFileSync(join(DIR, file), `${JSON.stringify(next, null, 1)}\n`);
   } catch {}
   return next;
 }

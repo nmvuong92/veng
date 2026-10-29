@@ -1413,6 +1413,8 @@ const LEVEL_COLOR: Record<string, string> = {
  * chính tả), server nhớ trong DB. Gõ từ / cụm / câu → IPA từng từ + Google dịch nghĩa tiếng Việt
  * (miễn phí, cache); có gợi ý autocomplete.
  */
+const IPA_HISTORY = 'ipa-lookups.json';
+
 function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
   const { exit } = useApp();
   const api = useRef(client(cfg)).current;
@@ -1427,9 +1429,17 @@ function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
       error?: string;
     }[]
   >([]);
+  const [recent, setRecent] = useState(() => loadLookups(IPA_HISTORY));
   const input = useLineEditor(q, setQ, !busy);
   const token = q.match(/[A-Za-z]+$/)?.[0] ?? '';
-  const sug = useSuggest(api, token, !busy, (w) => setQ(`${q.slice(0, q.length - token.length)}${w} `));
+  const sug = useSuggest(
+    api,
+    token,
+    !busy,
+    (w) => setQ(`${q.slice(0, q.length - token.length)}${w} `),
+    // Ô trống: những gì đã tra (IPA + nghĩa) — ↑↓ chọn, ⏎ tra lại.
+    q ? [] : recent.slice(0, 8).map((r) => ({ word: r.q, inDb: true, meaning: r.meaning })),
+  );
   useInput((ch, key) => {
     if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
     if (key.escape || (key.ctrl && ch === 'p')) return onBack();
@@ -1451,8 +1461,13 @@ function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
         dict: d,
       }))
       .catch((e) => ({ q: text, rows: [], error: (e as Error).message }))
-      .then((x) => {
+      .then((x: (typeof results)[number]) => {
         setResults((p) => [x, ...p.filter((y) => y.q !== text)].slice(0, 3));
+        if (!x.error) {
+          const ipa = x.rows.length === 1 && x.rows[0]?.e ? `/${x.rows[0].e.ipa}/` : '';
+          const meaning = [ipa, x.vi].filter(Boolean).join(' · ');
+          setRecent(saveLookup({ q: text, meaning: meaning || undefined }, IPA_HISTORY));
+        }
         setQ('');
         setBusy(false);
       });
@@ -1475,7 +1490,7 @@ function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
           input
         )}
       </Box>
-      <SuggestList items={sug.items} sel={sug.sel} q={sug.q} />
+      <SuggestList items={sug.items} sel={sug.sel} q={sug.q} recent={sug.recent} />
       {!results.length && !busy && !sug.items.length ? (
         <Text color={MUTED}>  Gõ từ, cụm hoặc cả câu tiếng Anh rồi ⏎.</Text>
       ) : null}
@@ -2018,12 +2033,14 @@ function SuggestList({
           )}
         </Text>
       ))}
-      <Text>
-        <Text color={BRAND}>  ● </Text>
-        <Text color={MUTED}>trong kho   </Text>
+      {items.some((s) => !s.inDb) ? (
+        <Text>
+          <Text color={BRAND}>  ● </Text>
+          <Text color={MUTED}>trong kho   </Text>
         <Text color={FAINT}>○ </Text>
-        <Text color={MUTED}>chưa có (từ điển)</Text>
-      </Text>
+          <Text color={MUTED}>chưa có (từ điển)</Text>
+        </Text>
+      ) : null}
       <Text color={MUTED}>
         {sel >= 0
           ? `  ⏎ dùng "${items[sel]?.word}" · ↑↓ về "${q || '…'}" để giữ chữ đã gõ`
