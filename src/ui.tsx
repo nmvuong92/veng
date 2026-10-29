@@ -95,12 +95,33 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
         return; // các Ctrl khác là phím tắt của màn hình
       }
       if (key.meta || !input) return;
-      // Dán nhiều dòng → một dòng; bỏ ký tự điều khiển (dán chung ^U… vào thì Ink coi là chữ thường).
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: chính là để lọc ký tự điều khiển
-      const text = input.replace(/[\r\n]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '');
-      if (!text) return;
-      change(value.slice(0, cur) + text + value.slice(cur));
-      setCur(cur + text.length);
+      // Duyệt TỪNG ký tự: bộ gõ Telex (OpenKey, EVKey…) sửa dấu bằng cách gửi ⌫ + chữ mới
+      // trong CÙNG một lần ("ee" → "\x7f" + "ê") — Ink coi cả cụm là chữ, nên ⌫ phải tự xử lý.
+      // Xuống dòng (dán nhiều dòng) → dấu cách; ký tự điều khiển khác thì bỏ.
+      let v = value;
+      let c = cur;
+      for (const ch of input) {
+        if (ch === '\x7f' || ch === '\b') {
+          if (c > 0) {
+            v = v.slice(0, c - 1) + v.slice(c);
+            c--;
+          }
+        } else if (ch === '\r' || ch === '\n') {
+          if (v[c - 1] !== ' ') {
+            v = `${v.slice(0, c)} ${v.slice(c)}`;
+            c++;
+          }
+        } else if (ch >= ' ') {
+          v = v.slice(0, c) + ch + v.slice(c);
+          c += ch.length;
+        }
+      }
+      // Dấu rời (e + ̂ + ̣) → một chữ "ệ", để con trỏ / ⌫ đếm đúng từng chữ.
+      const head = v.slice(0, c).normalize('NFC');
+      v = head + v.slice(c).normalize('NFC');
+      if (v === value) return;
+      change(v);
+      setCur(head.length);
     },
     { isActive: active },
   );
