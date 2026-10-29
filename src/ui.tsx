@@ -11,6 +11,7 @@ import {
   type HistoryPage,
   type IpaEntry,
   type Suggestion,
+  type ViEn,
   type WordDetail,
   type WordItem,
   type WordPreview,
@@ -531,6 +532,7 @@ function KeysHelp({ frame }: { frame: string }) {
         ['^N', 'đề khác'],
         ['^L', 'lịch sử'],
         ['^F', 'tra từ (popup, bài vẫn giữ)'],
+        ['^G', 'Việt → Anh: Google + AI'],
         ['^X', 'luyện lại từ đầu (khi hết kho)'],
       ],
     ],
@@ -1107,6 +1109,104 @@ function IpaTable({ rows }: { rows: { w: string; e?: IpaEntry }[] }) {
   );
 }
 
+const LEVEL_COLOR: Record<string, string> = {
+  'rất thông dụng': BRAND,
+  'thông dụng': '#7fd8c6',
+  'thân mật': '#f472b6',
+  'trang trọng': WARM,
+  'ít dùng': MUTED,
+};
+
+/**
+ * ^G — tra nhanh Việt → Anh, một lần ⏎ là đủ: Google Translate + AI (2–3 cách nói, mức độ
+ * thông dụng) + từ trong kho có nghĩa khớp. Server cache vĩnh viễn nên tra lại không tốn token.
+ */
+function ViEnView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () => void; embedded?: boolean }) {
+  const { exit } = useApp();
+  const api = useRef(client(cfg)).current;
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [results, setResults] = useState<{ q: string; r?: ViEn; error?: string }[]>([]);
+  const input = useLineEditor(q, setQ, !busy);
+  useInput((ch, key) => {
+    if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
+    if (key.escape || (key.ctrl && ch === 'g')) return onBack();
+    if (!key.return || busy || !q.trim()) return;
+    const text = q.trim();
+    setBusy(true);
+    api
+      .viEn(text)
+      .then((r) => ({ q: text, r }))
+      .catch((e) => ({ q: text, error: (e as Error).message }))
+      .then((x) => {
+        setResults((p) => [x, ...p.filter((y) => y.q !== text)].slice(0, 3));
+        setQ('');
+        setBusy(false);
+      });
+  });
+  return (
+    <Box flexDirection="column" paddingX={embedded ? 0 : 1}>
+      <Text>
+        <Text color={WARM} bold>
+          ▍Việt → Anh
+        </Text>
+        <Text color={MUTED}> · Google + AI (cách nói, mức độ thông dụng) · ^G hoặc esc để đóng</Text>
+      </Text>
+      <Box borderStyle="round" borderColor={WARM} paddingX={1}>
+        <Text>
+          <Text color={WARM}>› </Text>
+          {busy ? (
+            <Text color={MUTED}>
+              <Spinner type="dots" /> đang tra…
+            </Text>
+          ) : (
+            input
+          )}
+        </Text>
+      </Box>
+      {!results.length && !busy ? <Text color={MUTED}>  Gõ tiếng Việt (từ, cụm hoặc câu) rồi ⏎.</Text> : null}
+      {results.map((x, i) => (
+        <Box key={x.q} flexDirection="column" marginTop={1}>
+          <Text bold={i === 0} dimColor={i > 0}>
+            {'  '}
+            {x.q}
+          </Text>
+          {x.error ? <Text color={BAD}>    ✗ {x.error}</Text> : null}
+          {x.r?.google ? (
+            <Text dimColor={i > 0}>
+              <Text color={MUTED}>    Google  </Text>
+              <Text bold>{x.r.google}</Text>
+            </Text>
+          ) : null}
+          {x.r?.options.map((o, j) => (
+            <Text key={o.en} dimColor={i > 0}>
+              <Text color={MUTED}>{j === 0 ? '    AI      ' : '            '}</Text>
+              <Text bold color={BRAND}>
+                {o.en}
+              </Text>
+              <Text color={LEVEL_COLOR[o.level] ?? MUTED}> · {o.level}</Text>
+              {o.note ? <Text color={MUTED}> · {o.note}</Text> : null}
+            </Text>
+          ))}
+          {x.r?.aiError ? <Text color={MUTED}>    AI      ✗ {x.r.aiError}</Text> : null}
+          {x.r?.kho.length ? (
+            <Text dimColor={i > 0}>
+              <Text color={MUTED}>    Kho     </Text>
+              {x.r.kho.map((k) => `${k.word} (${k.meaning})`).join(' · ')}
+            </Text>
+          ) : null}
+        </Box>
+      ))}
+      <Keys
+        items={[
+          ['⏎', 'tra'],
+          ['esc', embedded ? 'đóng, về bài' : 'quay lại'],
+        ]}
+      />
+    </Box>
+  );
+}
+
 type VocabPhase =
   | { s: 'idle' }
   | { s: 'busy'; msg: string }
@@ -1144,7 +1244,10 @@ function VocabView({
   const [q, setQ] = useState('');
   const [phase, setPhase] = useState<VocabPhase>({ s: 'idle' });
   const [recent, setRecent] = useState<Lookup[]>(() => loadLookups());
-  const typing = phase.s === 'idle' || phase.s === 'found' || phase.s === 'saved' || phase.s === 'error';
+  /** ^G: chuyển sang tra Việt → Anh; ô nhập + gợi ý ở đây phải tắt để phím không lọt vào cả hai. */
+  const [vien, setVien] = useState(false);
+  const typing =
+    !vien && (phase.s === 'idle' || phase.s === 'found' || phase.s === 'saved' || phase.s === 'error');
   const input = useLineEditor(q, setQ, typing);
   // Vừa tra xong (ô nhập vẫn là chữ đó) thì khỏi gợi ý lại.
   const justSearched = phase.s === 'found' && q.trim() === phase.q;
@@ -1208,7 +1311,9 @@ function VocabView({
 
   useInput((ch, key) => {
     if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
+    if (vien) return;
     if (embedded && key.ctrl && ch === 'f') return onBack();
+    if (key.ctrl && ch === 'g') return setVien(true);
     if (phase.s === 'busy') return;
     if (phase.s === 'preview') {
       if (key.escape) return setPhase({ s: 'idle' });
@@ -1227,6 +1332,8 @@ function VocabView({
     lookup(text);
   });
 
+  if (vien) return <ViEnView cfg={cfg} embedded={embedded} onBack={() => setVien(false)} />;
+
   const canAdd = phase.s === 'found' && !phase.detail && q.trim() === phase.q;
   const hint: [string, string][] =
     phase.s === 'preview'
@@ -1242,6 +1349,7 @@ function VocabView({
           ]
         : [
             ['⏎', 'tra'],
+            ['^G', 'Việt → Anh'],
             ['esc', embedded ? 'đóng, về bài' : 'về màn chào'],
           ];
 
@@ -1788,7 +1896,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const [hint, setHint] = useState(0);
   const [vocab, setVocab] = useState<Vocab | 'loading' | { error: string } | null>(null);
   const [reveal, setReveal] = useState(false);
-  const [view, setView] = useState<'drill' | 'history' | 'lookup'>('drill');
+  const [view, setView] = useState<'drill' | 'history' | 'lookup' | 'vien'>('drill');
   const [frameIdx, setFrameIdx] = useState(() => Math.max(0, FRAMES.findIndex((f) => f.name === cfg.frame)));
   const frame = FRAMES[frameIdx] ?? FRAMES[0]!;
   /** ^K: bảng phím tắt đầy đủ; mặc định chỉ một dòng gợi ý theo tình huống. */
@@ -1997,6 +2105,8 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     if (key.ctrl && input === 'l') return setView('history');
     // ^F: popup tra từ — Practice vẫn mounted nên câu đang gõ, kết quả chấm, câu đang chọn giữ nguyên.
     if (key.ctrl && input === 'f') return setView('lookup');
+    // ^G: popup tra Việt → Anh (Google + AI) — bài vẫn giữ nguyên như ^F.
+    if (key.ctrl && input === 'g') return setView('vien');
     if (key.ctrl && input === 'k') return setShowKeys((v) => !v);
     if (key.ctrl && input === 't') {
       const next = (frameIdx + 1) % FRAMES.length;
@@ -2071,6 +2181,17 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
       return next;
     });
 
+  if (view === 'vien') {
+    return (
+      <Box flexDirection="column" paddingX={1}>
+        <Header stats={stats} kind={kind} />
+        <Box borderStyle="round" borderColor={frame.color} paddingX={1} flexDirection="column">
+          <ViEnView cfg={cfg} embedded onBack={() => setView('drill')} />
+        </Box>
+      </Box>
+    );
+  }
+
   if (view === 'lookup') {
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -2117,6 +2238,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
               ['↑↓', 'đổi câu'],
             ]) as [string, string][]),
     ['^F', 'tra từ'],
+    ['^G', 'Việt→Anh'],
     ['^K', 'phím tắt'],
   ];
 

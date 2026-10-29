@@ -222,6 +222,13 @@ export interface FamilyEntry {
   examples?: string[];
 }
 /** Chi tiết một từ trong kho (GET /api/words/:id) — như trang từ vựng trên web. */
+/** Tra nhanh Việt → Anh (^G). */
+export interface ViEn {
+  google: string | null;
+  options: { en: string; level: string; note: string }[];
+  aiError: string | null;
+  kho: { word: string; meaning: string }[];
+}
 export interface WordDetail {
   id: string;
   word: string;
@@ -304,6 +311,7 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
     /** Autocomplete: từ trong kho (kèm nghĩa) trước, rồi từ điển dwyl/english-words (inDb=false). */
     suggest: (q: string) =>
       call<{ items: Suggestion[] }>(`/words/suggest?q=${encodeURIComponent(q)}&limit=8`),
+    viEn: (text: string) => call<ViEn>('/translate/vi-en', { text }),
     wordDetail: (id: string) => call<WordDetail>(`/words/${encodeURIComponent(id)}`),
     /** Tìm trong kho từ vựng (khớp từ / nghĩa / ví dụ). */
     searchWords: (q: string) =>
