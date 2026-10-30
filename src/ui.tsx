@@ -329,6 +329,27 @@ function useLoadAiStatus(api: Client) {
 const PROVIDER_LABEL: Record<AiProvider, string> = { gemini: 'Google Gemini', openai: 'OpenAI' };
 
 /**
+ * Giá tham khảo (USD / 1 triệu token: [vào, ra]) — để ước lượng khi chọn model. Giá nhà cung cấp
+ * đổi theo thời gian; cập nhật ở đây. Model không có trong bảng thì không hiện giá.
+ */
+const MODEL_PRICE: Record<string, [number, number]> = {
+  'gemini-2.5-flash': [0.3, 2.5],
+  'gemini-2.5-flash-lite': [0.1, 0.4],
+  'gemini-2.5-pro': [1.25, 10],
+  'gemini-2.0-flash': [0.1, 0.4],
+  'gpt-4.1-mini': [0.4, 1.6],
+  'gpt-4.1': [2, 8],
+  'gpt-5-mini': [0.25, 2],
+  'gpt-4o-mini': [0.15, 0.6],
+};
+const usd = (n: number) => `$${n < 1 ? n.toFixed(2) : n.toFixed(2).replace(/\.00$/, '')}`;
+/** "vào $0.40 · ra $1.60 /1M" — gọn, cho dòng đang chọn. */
+function priceLine(model: string): string | null {
+  const p = MODEL_PRICE[model];
+  return p ? `vào ${usd(p[0])} · ra ${usd(p[1])} /1M token` : null;
+}
+
+/**
  * Popup chọn model AI: liệt kê CẢ Gemini lẫn OpenAI (gom theo nhà cung cấp). ↑↓ chọn, ⏎ đổi,
  * esc đóng. Chọn là đổi luôn provider + model, lưu GLOBAL trên server. Nhà cung cấp chưa có khoá
  * được đánh dấu — chọn vẫn được nhưng sẽ cần nhập khoá ở trang Admin mới chạy.
@@ -390,6 +411,7 @@ function ModelView({ api, onBack }: { api: Client; onBack: () => void }) {
               const i = items.findIndex((x) => x.provider === p.id && x.model === m);
               const on = i === sel;
               const cur = p.id === status?.provider && m === status?.model;
+              const price = priceLine(m);
               return (
                 <Text key={`${p.id}:${m}`}>
                   <Text color={on ? WARM : undefined} bold={on}>
@@ -399,6 +421,8 @@ function ModelView({ api, onBack }: { api: Client; onBack: () => void }) {
                     {m}
                   </Text>
                   {cur ? <Text color={BRAND}>  ● đang dùng</Text> : null}
+                  {/* Giá chỉ hiện ở dòng đang chọn cho gọn. */}
+                  {on && price ? <Text color={MUTED}>   {price}</Text> : null}
                 </Text>
               );
             })}
