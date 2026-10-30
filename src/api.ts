@@ -390,6 +390,9 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
     enVi: (text: string) => call<{ translatedText: string }>('/translate', { text }),
     /** Model AI đang dùng + danh sách gợi ý (hiện ở tiêu đề, đổi bằng phím tắt). */
     aiStatus: () => call<AiStatus>('/ai/status'),
+    /** Hỏi AI nhanh — trả lời ngắn gọn, tiết kiệm token, cache câu hỏi. */
+    ask: (q: string) =>
+      call<{ answer: string; cached: boolean; model: string; usage: { in: number; out: number } | null }>('/ask', { q }),
     /** Đổi provider + model (global trên server). */
     setModel: (model: string, provider?: AiProvider) =>
       call<{ provider: AiProvider; model: string }>('/ai/model', { model, provider }, 'PUT'),

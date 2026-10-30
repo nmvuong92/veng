@@ -349,6 +349,23 @@ function priceLine(model: string): string | null {
   return p ? `vào ${usd(p[0])} · ra ${usd(p[1])} /1M token` : null;
 }
 
+/** Tỉ giá ước tính USD → VND (chỉ để tham khảo). */
+const VND_PER_USD = 25_000;
+/** USD đủ nhỏ thì hiện nhiều chữ số; VND làm tròn. */
+const usdSmall = (n: number) => (n >= 0.01 ? `$${n.toFixed(2)}` : `$${n.toFixed(5).replace(/0+$/, '')}`);
+const vnd = (n: number) => `${Math.round(n).toLocaleString('vi-VN')}đ`;
+/**
+ * Dòng chi phí sau một câu trả lời: số token vào/ra + tiền ước tính (theo bảng giá model).
+ * Model không có trong bảng giá → chỉ hiện token. usage null (cache) → bên gọi tự hiện "cache".
+ */
+function costLine(model: string, usage: { in: number; out: number }): string {
+  const p = MODEL_PRICE[model];
+  const toks = `${usage.in} token vào · ${usage.out} ra`;
+  if (!p) return toks;
+  const cost = (usage.in / 1e6) * p[0] + (usage.out / 1e6) * p[1];
+  return `${toks} · ~${usdSmall(cost)} (≈ ${vnd(cost * VND_PER_USD)})`;
+}
+
 /**
  * Popup chọn model AI: liệt kê CẢ Gemini lẫn OpenAI (gom theo nhà cung cấp). ↑↓ chọn, ⏎ đổi,
  * esc đóng. Chọn là đổi luôn provider + model, lưu GLOBAL trên server. Nhà cung cấp chưa có khoá
@@ -828,6 +845,8 @@ function KeysHelp({ frame }: { frame: string }) {
         ['^F', 'tra từ (popup, bài vẫn giữ)'],
         ['^G', 'Việt → Anh: Google + AI'],
         ['^P', 'IPA — không tốn token'],
+        ['^B', 'hỏi AI bất kỳ — trả lời ngắn gọn'],
+        ['^Y', 'đổi model AI'],
         ['^O', 'nhắc chính tả khi gõ: bật / tắt'],
         ['^X', 'luyện lại từ đầu (khi hết kho)'],
       ],
@@ -1314,7 +1333,7 @@ export function App({ cfg }: { cfg: Config }) {
   SPELL.on = cfg.spell !== false;
   const [kind, setKind] = useState<Kind | null>(null);
   /** home = màn chào + 2 mục · kinds = chọn loại luyện · ipa = tra phiên âm. */
-  const [screen, setScreen] = useState<'home' | 'kinds' | 'vocab' | 'model'>('home');
+  const [screen, setScreen] = useState<'home' | 'kinds' | 'vocab' | 'model' | 'ask'>('home');
   const menuApi = useRef(client(cfg)).current;
   useLoadAiStatus(menuApi);
   const seenHome = useRef(false);
@@ -1339,6 +1358,7 @@ export function App({ cfg }: { cfg: Config }) {
     (input, key) => {
       if (key.ctrl && (input === 'c' || input === 'd')) return exit();
       if (key.ctrl && input === 'y') return setScreen('model');
+      if (key.ctrl && input === 'b') return setScreen('ask');
       if (key.escape) return goHome();
       if (key.upArrow) setCur((c) => (c + KINDS.length - 1) % KINDS.length);
       if (key.downArrow || key.tab) setCur((c) => (c + 1) % KINDS.length);
@@ -1359,6 +1379,7 @@ export function App({ cfg }: { cfg: Config }) {
   }
   if (screen === 'vocab') return <VocabView cfg={cfg} onBack={goHome} />;
   if (screen === 'model') return <ModelView api={menuApi} onBack={() => setScreen('kinds')} />;
+  if (screen === 'ask') return <AskView cfg={cfg} onBack={() => setScreen('kinds')} />;
   if (kind) return <Practice key={kind.id} cfg={cfg} kind={kind} onBack={() => setKind(null)} />;
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -1384,6 +1405,7 @@ export function App({ cfg }: { cfg: Config }) {
           ['1–9 a–e', 'nhảy tới'],
           ['⏎', 'vào luyện'],
           ['^Y', 'đổi model'],
+          ['^B', 'hỏi AI'],
           ['esc', 'về màn chào'],
           ['^C', 'thoát'],
         ]}
@@ -1754,6 +1776,97 @@ function ViEnView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () =
       <Keys
         items={[
           ['⏎', 'tra'],
+          ['esc', embedded ? 'đóng, về bài' : 'quay lại'],
+        ]}
+      />
+    </Box>
+  );
+}
+
+/**
+ * ^B — hỏi AI bất kỳ (chủ yếu về tiếng Anh), trả lời NGẮN GỌN. Server giới hạn token + cache câu
+ * hỏi nên hỏi lại y hệt không tốn thêm. Giữ 3 câu gần nhất; mỗi dòng trả lời tự xuống dòng gọn.
+ */
+function AskView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () => void; embedded?: boolean }) {
+  const { exit } = useApp();
+  const api = useRef(client(cfg)).current;
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [results, setResults] = useState<
+    { q: string; answer?: string; cached?: boolean; model?: string; usage?: { in: number; out: number } | null; error?: string }[]
+  >([]);
+  const input = useLineEditor(q, setQ, !busy);
+  useInput((ch, key) => {
+    if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
+    if (key.escape || (key.ctrl && ch === 'b')) return onBack();
+    if (!key.return || busy || !q.trim()) return;
+    const text = q.trim();
+    setBusy(true);
+    api
+      .ask(text)
+      .then((r) => ({ q: text, answer: r.answer, cached: r.cached, model: r.model, usage: r.usage }))
+      .catch((e) => ({ q: text, error: (e as Error).message }))
+      .then((x) => {
+        setResults((p) => [x, ...p.filter((y) => y.q !== text)].slice(0, 3));
+        setQ('');
+        setBusy(false);
+      });
+  });
+  return (
+    <Box flexDirection="column" paddingX={embedded ? 0 : 1}>
+      <Text>
+        <Text color={WARM} bold>
+          ▍Hỏi AI
+        </Text>
+        <Text color={MUTED}> · trả lời ngắn gọn, tiết kiệm token (cache) · ^B hoặc esc để đóng</Text>
+      </Text>
+      <Box borderStyle="round" borderColor={WARM} paddingX={1}>
+        <Text color={WARM}>? </Text>
+        {busy ? (
+          <Text color={MUTED}>
+            <Spinner type="dots" /> đang hỏi…
+          </Text>
+        ) : (
+          input
+        )}
+      </Box>
+      {!results.length && !busy ? (
+        <Text color={MUTED}>  Hỏi gì cũng được (vd "phân biệt make/do", "since vs for") rồi ⏎.</Text>
+      ) : null}
+      {results.map((x, i) => (
+        <Box key={x.q} flexDirection="column" marginTop={1}>
+          <Hang indent={2} mark={<Text color={MUTED}>? </Text>} dim={i > 0} bold={i === 0}>
+            {x.q}
+          </Hang>
+          {x.error ? (
+            <Text color={BAD}>    ✗ {x.error}</Text>
+          ) : (
+            x.answer?.split('\n').map((ln, k) =>
+              ln.trim() ? (
+                // biome-ignore lint/suspicious/noArrayIndexKey: dòng trả lời không có id riêng
+                <Box key={k} marginLeft={2}>
+                  <Text color={i > 0 ? MUTED : BRAND} wrap="wrap">
+                    {ln.replace(/^[-*]\s*/, '• ')}
+                  </Text>
+                </Box>
+              ) : null,
+            )
+          )}
+          {!x.error ? (
+            <Text color={FAINT}>
+              {'    '}
+              {x.cached
+                ? '⤷ lấy từ cache — không tốn token'
+                : x.usage
+                  ? `⤷ ${costLine(x.model ?? '', x.usage)}`
+                  : '⤷ đã trả lời (không đo được token)'}
+            </Text>
+          ) : null}
+        </Box>
+      ))}
+      <Keys
+        items={[
+          ['⏎', 'hỏi'],
           ['esc', embedded ? 'đóng, về bài' : 'quay lại'],
         ]}
       />
@@ -2497,7 +2610,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const [hint, setHint] = useState(0);
   const [vocab, setVocab] = useState<Vocab | 'loading' | { error: string } | null>(null);
   const [reveal, setReveal] = useState(false);
-  const [view, setView] = useState<'drill' | 'history' | 'lookup' | 'vien' | 'ipa' | 'model'>('drill');
+  const [view, setView] = useState<'drill' | 'history' | 'lookup' | 'vien' | 'ipa' | 'model' | 'ask'>('drill');
   const [frameIdx, setFrameIdx] = useState(() => Math.max(0, FRAMES.findIndex((f) => f.name === cfg.frame)));
   const frame = FRAMES[frameIdx] ?? FRAMES[0]!;
   /** ^K: bảng phím tắt đầy đủ; mặc định chỉ một dòng gợi ý theo tình huống. */
@@ -2728,6 +2841,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     // ^P: popup tra IPA (không AI, không tốn token). ^I không dùng được: terminal gửi giống Tab.
     if (key.ctrl && input === 'p') return setView('ipa');
     if (key.ctrl && input === 'y') return setView('model');
+    if (key.ctrl && input === 'b') return setView('ask');
     if (key.ctrl && input === 'k') return setShowKeys((v) => !v);
     // ^O: bật / tắt nhắc chính tả (lưu config) — muốn luyện "thật" thì tắt.
     if (key.ctrl && input === 'o') {
@@ -2817,6 +2931,14 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
       </Box>
     );
   }
+  if (view === 'ask') {
+    return (
+      <Box flexDirection="column" paddingX={1}>
+        <Header stats={stats} kind={kind} />
+        <AskView cfg={cfg} embedded onBack={() => setView('drill')} />
+      </Box>
+    );
+  }
   if (view === 'ipa') {
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -2887,6 +3009,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     ['^F', 'tra từ'],
     ['^G', 'Việt→Anh'],
     ['^P', 'IPA'],
+    ['^B', 'hỏi AI'],
     ['^K', 'phím tắt'],
   ];
 
