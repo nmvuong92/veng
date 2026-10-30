@@ -27,6 +27,7 @@ import {
   linesOf,
   type Stats,
   type AiStatus,
+  type AiProvider,
   type Summary,
   type Vocab,
   saveConfig,
@@ -325,27 +326,38 @@ function useLoadAiStatus(api: Client) {
   }, [api]);
 }
 
-/** Popup chọn model: ↑↓ chọn, ⏎ đổi, esc đóng. Đổi là áp dụng ngay trên server (global). */
+const PROVIDER_LABEL: Record<AiProvider, string> = { gemini: 'Google Gemini', openai: 'OpenAI' };
+
+/**
+ * Popup chọn model AI: liệt kê CẢ Gemini lẫn OpenAI (gom theo nhà cung cấp). ↑↓ chọn, ⏎ đổi,
+ * esc đóng. Chọn là đổi luôn provider + model, lưu GLOBAL trên server. Nhà cung cấp chưa có khoá
+ * được đánh dấu — chọn vẫn được nhưng sẽ cần nhập khoá ở trang Admin mới chạy.
+ */
 function ModelView({ api, onBack }: { api: Client; onBack: () => void }) {
   const { exit } = useApp();
   const status = useAiStatus();
-  const models = status?.models ?? [];
-  const [sel, setSel] = useState(() => Math.max(0, models.indexOf(status?.model ?? '')));
+  // Danh sách phẳng mọi (provider, model) để di chuyển con trỏ; kèm cờ có khoá.
+  const items = (status?.providers ?? []).flatMap((p) =>
+    p.models.map((m) => ({ provider: p.id, model: m, hasKey: p.hasKey })),
+  );
+  const curIdx = items.findIndex((x) => x.provider === status?.provider && x.model === status?.model);
+  const [sel, setSel] = useState(() => Math.max(0, curIdx));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   useInput((ch, key) => {
     if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
     if (key.escape || (key.ctrl && ch === 'y')) return onBack();
-    if (busy || !models.length) return;
-    if (key.upArrow) return setSel((i) => (i + models.length - 1) % models.length);
-    if (key.downArrow || key.tab) return setSel((i) => (i + 1) % models.length);
+    if (busy || !items.length) return;
+    if (key.upArrow) return setSel((i) => (i + items.length - 1) % items.length);
+    if (key.downArrow || key.tab) return setSel((i) => (i + 1) % items.length);
     if (key.return) {
-      const m = models[sel];
-      if (!m || m === status?.model) return onBack();
+      const pick = items[sel];
+      if (!pick) return onBack();
+      if (pick.provider === status?.provider && pick.model === status?.model) return onBack();
       setBusy(true);
-      api.setModel(m).then(
+      api.setModel(pick.model, pick.provider).then(
         (r) => {
-          setAiStatus(status ? { ...status, model: r.model } : status);
+          setAiStatus(status ? { ...status, provider: r.provider, model: r.model } : status);
           onBack();
         },
         (e) => {
@@ -361,21 +373,38 @@ function ModelView({ api, onBack }: { api: Client; onBack: () => void }) {
         <Text color={WARM} bold>
           ▍Model AI
         </Text>
-        <Text color={MUTED}> · {status ? `${status.provider} · đang dùng ${status.model}` : 'đang tải…'} · ^Y / esc đóng</Text>
+        <Text color={MUTED}>
+          {' '}
+          · {status ? `đang dùng ${PROVIDER_LABEL[status.provider]} · ${status.model}` : 'đang tải…'} · ^Y / esc đóng
+        </Text>
       </Text>
       <Box flexDirection="column" marginY={1}>
-        {models.map((m, i) => (
-          <Text key={m}>
-            <Text color={i === sel ? WARM : undefined} bold={i === sel}>
-              {i === sel ? ' ▸ ' : '   '}
+        {(status?.providers ?? []).map((p) => (
+          <Box key={p.id} flexDirection="column">
+            <Text color={MUTED}>
+              {'  '}
+              {PROVIDER_LABEL[p.id]}
+              {p.hasKey ? '' : ' (chưa có khoá — nhập ở trang Admin)'}
             </Text>
-            <Text color={i === sel ? WARM : undefined} bold={i === sel}>
-              {m}
-            </Text>
-            {m === status?.model ? <Text color={BRAND}>  ● đang dùng</Text> : null}
-          </Text>
+            {p.models.map((m) => {
+              const i = items.findIndex((x) => x.provider === p.id && x.model === m);
+              const on = i === sel;
+              const cur = p.id === status?.provider && m === status?.model;
+              return (
+                <Text key={`${p.id}:${m}`}>
+                  <Text color={on ? WARM : undefined} bold={on}>
+                    {on ? ' ▸ ' : '   '}
+                  </Text>
+                  <Text color={on ? WARM : p.hasKey ? undefined : FAINT} bold={on}>
+                    {m}
+                  </Text>
+                  {cur ? <Text color={BRAND}>  ● đang dùng</Text> : null}
+                </Text>
+              );
+            })}
+          </Box>
         ))}
-        {!models.length ? <Text color={MUTED}>  (chưa tải được danh sách model)</Text> : null}
+        {!items.length ? <Text color={MUTED}>  (chưa tải được danh sách model)</Text> : null}
       </Box>
       {busy ? (
         <Text color={MUTED}>

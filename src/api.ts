@@ -158,10 +158,11 @@ export interface Feedback {
   /** pic: hình ảnh liên tưởng để nhớ giới từ (bản chấm cũ không có). */
   preps?: { phrase: string; why: string; pic?: string }[];
 }
+export type AiProvider = 'gemini' | 'openai';
 export interface AiStatus {
-  provider: 'gemini' | 'openai';
+  provider: AiProvider;
   model: string;
-  models: string[];
+  providers: { id: AiProvider; models: string[]; hasKey: boolean }[];
 }
 
 export interface Stats {
@@ -389,8 +390,9 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
     enVi: (text: string) => call<{ translatedText: string }>('/translate', { text }),
     /** Model AI đang dùng + danh sách gợi ý (hiện ở tiêu đề, đổi bằng phím tắt). */
     aiStatus: () => call<AiStatus>('/ai/status'),
-    /** Đổi model cho provider đang dùng (global trên server). */
-    setModel: (model: string) => call<{ provider: string; model: string }>('/ai/model', { model }, 'PUT'),
+    /** Đổi provider + model (global trên server). */
+    setModel: (model: string, provider?: AiProvider) =>
+      call<{ provider: AiProvider; model: string }>('/ai/model', { model, provider }, 'PUT'),
     /** Từ điển Google Dịch cho 1 từ: loại từ + các nghĩa tiếng Việt (miễn phí, cache). */
     dict: (word: string) => call<{ dict: { pos: string; terms: string[] }[] }>('/translate/dict', { word }),
     history: (filter: 'weak' | 'all', page: number, pageSize: number) =>
