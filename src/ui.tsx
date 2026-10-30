@@ -2686,6 +2686,8 @@ function feedbackRows(fb: Feedback, sample: string, w: number, lean = false): nu
 
 function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () => void }) {
   const { exit } = useApp();
+  // Hook phải ở trên MỌI return sớm (các sub-view) — kẻo lần render đó bỏ hook → React #300.
+  const aiModel = useAiStatus()?.model ?? '';
   const api = useRef<Client>(client(cfg, kind.id)).current;
   const [drill, setDrill] = useState<Drill | null>(null);
   const [answers, setAnswers] = useState<string[]>([]);
@@ -3069,7 +3071,6 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const done = feedbacks.filter(Boolean).length;
   const right = feedbacks.filter((f) => f?.meaningOk && f?.tenseOk).length;
   const grading = pending.filter(Boolean).length;
-  const aiModel = useAiStatus()?.model ?? '';
   const paraUsage = sumUsage(feedbacks, summary); // tổng token cả đoạn (phiên này)
   // Một dòng phím theo tình huống — đủ dùng lúc đó; ^K mở bảng đầy đủ.
   const curFb = feedbacks[cur];
