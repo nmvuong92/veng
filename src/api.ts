@@ -191,6 +191,8 @@ export interface Summary {
   lines: { index: number; wrong: string[] }[];
   focus: string[];
   overall: string;
+  /** Token cho lượt tổng kết (null nếu cache/khớp mẫu/server cũ). */
+  usage?: { in: number; out: number } | null;
 }
 
 export interface VocabWord {

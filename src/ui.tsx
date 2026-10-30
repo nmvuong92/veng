@@ -351,6 +351,29 @@ function priceLine(model: string): string | null {
   return p ? `vào ${usd(p[0])} · ra ${usd(p[1])} /1M token` : null;
 }
 
+/** Cộng token của các câu đã chấm (+ lượt tổng kết) — cho dòng tổng cuối summary. */
+function sumUsage(
+  feedbacks: (Feedback | null)[],
+  summary: Summary | null,
+): { in: number; out: number } | null {
+  let tin = 0;
+  let tout = 0;
+  let any = false;
+  for (const fb of feedbacks) {
+    if (fb?.usage && !fb.cached) {
+      tin += fb.usage.in;
+      tout += fb.usage.out;
+      any = true;
+    }
+  }
+  if (summary?.usage) {
+    tin += summary.usage.in;
+    tout += summary.usage.out;
+    any = true;
+  }
+  return any ? { in: tin, out: tout } : null;
+}
+
 /** Tỉ giá ước tính USD → VND (chỉ để tham khảo). */
 const VND_PER_USD = 25_000;
 /** USD đủ nhỏ thì hiện nhiều chữ số; VND làm tròn. */
@@ -3046,6 +3069,8 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const done = feedbacks.filter(Boolean).length;
   const right = feedbacks.filter((f) => f?.meaningOk && f?.tenseOk).length;
   const grading = pending.filter(Boolean).length;
+  const aiModel = useAiStatus()?.model ?? '';
+  const paraUsage = sumUsage(feedbacks, summary); // tổng token cả đoạn (phiên này)
   // Một dòng phím theo tình huống — đủ dùng lúc đó; ^K mở bảng đầy đủ.
   const curFb = feedbacks[cur];
   const quickKeys: [string, string][] = [
@@ -3105,7 +3130,9 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     2 +
     (drill?.context ? rowsOf(drill.context, W - 3) : 0) +
     2 +
-    (allGraded ? 4 + (summary ? rowsOf(summary.overall, W - 4) + summary.focus.length : 1) : 0) +
+    (allGraded
+      ? 4 + (summary ? rowsOf(summary.overall, W - 4) + summary.focus.length + (paraUsage ? 1 : 0) : 1)
+      : 0) +
     (wrapped ? 2 : 0) +
     (busy ? 1 : 0) +
     (error ? rowsOf(error, W) : 0) +
@@ -3297,6 +3324,9 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       → {f}
                     </Text>
                   ))}
+                  {paraUsage ? (
+                    <Text color={FAINT}>⤷ cả đoạn: {costLine(aiModel, paraUsage)}</Text>
+                  ) : null}
                 </>
               ) : steps.length > 1 ? (
                 <Text color={MUTED}>
