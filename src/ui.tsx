@@ -1618,6 +1618,36 @@ const LEVEL_COLOR: Record<string, string> = {
  * (miễn phí, cache); có gợi ý autocomplete.
  */
 const IPA_HISTORY = 'ipa-lookups.json';
+const VIEN_HISTORY = 'vien-lookups.json';
+const ASK_HISTORY = 'ask-lookups.json';
+
+/** Lịch sử tra local dùng chung (^G, ^B): giữ danh sách + con trỏ chọn; lưu ra file. */
+function useRecent(file: string) {
+  const [recent, setRecent] = useState(() => loadLookups(file));
+  const [sel, setSel] = useState(-1);
+  const save = (q: string, meaning?: string) => setRecent(saveLookup({ q, meaning }, file));
+  const move = (d: 1 | -1) =>
+    setSel((s) => (d > 0 ? (s >= recent.length - 1 ? -1 : s + 1) : s <= -1 ? recent.length - 1 : s - 1));
+  return { recent, sel, setSel, save, move };
+}
+
+/** Danh sách "đã tra gần đây" khi ô nhập trống — ↑↓ chọn, ⏎ tra lại. */
+function RecentList({ items, sel }: { items: Lookup[]; sel: number }) {
+  if (!items.length) return null;
+  return (
+    <Box flexDirection="column" marginLeft={2} marginTop={1}>
+      <Text color={MUTED}>đã tra gần đây</Text>
+      {items.slice(0, 8).map((r, i) => (
+        <Text key={r.q} wrap="truncate-end">
+          <Text color={WARM}>{i === sel ? '▸' : ' '}</Text>
+          <Text bold={i === sel}> {r.q}</Text>
+          {r.meaning ? <Text color={MUTED}> — {r.meaning}</Text> : null}
+        </Text>
+      ))}
+      <Text color={MUTED}>↑↓ chọn · ⏎ tra lại</Text>
+    </Box>
+  );
+}
 
 function IpaView({ cfg, onBack }: { cfg: Config; onBack: () => void }) {
   const { exit } = useApp();
@@ -1738,19 +1768,29 @@ function ViEnView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () =
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState<{ q: string; r?: ViEn; error?: string }[]>([]);
   const input = useLineEditor(q, setQ, !busy);
+  const rec = useRecent(VIEN_HISTORY);
+  const showRecent = !q.trim() && !results.length && !busy;
   useInput((ch, key) => {
     if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
     if (key.escape || (key.ctrl && ch === 'g')) return onBack();
-    if (!key.return || busy || !q.trim()) return;
-    const text = q.trim();
+    if (showRecent && rec.recent.length) {
+      if (key.upArrow) return rec.move(-1);
+      if (key.downArrow) return rec.move(1);
+    }
+    if (!key.return || busy) return;
+    const text = (showRecent && rec.sel >= 0 ? rec.recent[rec.sel]?.q : q)?.trim();
+    if (!text) return;
     setBusy(true);
     api
       .viEn(text)
       .then((r) => ({ q: text, r }))
       .catch((e) => ({ q: text, error: (e as Error).message }))
-      .then((x) => {
+      .then((x: { q: string; r?: ViEn; error?: string }) => {
         setResults((p) => [x, ...p.filter((y) => y.q !== text)].slice(0, 3));
+        // Lưu lịch sử: nghĩa ngắn = bản Google (hoặc cách nói AI đầu tiên).
+        if (!x.error) rec.save(text, x.r?.google || x.r?.options?.[0]?.en || undefined);
         setQ('');
+        rec.setSel(-1);
         setBusy(false);
       });
   });
@@ -1772,7 +1812,10 @@ function ViEnView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () =
           input
         )}
       </Box>
-      {!results.length && !busy ? <Text color={MUTED}>  Gõ tiếng Việt (từ, cụm hoặc câu) rồi ⏎.</Text> : null}
+      {showRecent && !rec.recent.length ? (
+        <Text color={MUTED}>  Gõ tiếng Việt (từ, cụm hoặc câu) rồi ⏎.</Text>
+      ) : null}
+      {showRecent ? <RecentList items={rec.recent} sel={rec.sel} /> : null}
       {results.map((x, i) => (
         <Box key={x.q} flexDirection="column" marginTop={1}>
           <Text bold={i === 0} dimColor={i > 0}>
@@ -1865,13 +1908,21 @@ function AskView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () =>
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
   const input = useLineEditor(q, setQ, !busy);
+  const rec = useRecent(ASK_HISTORY);
+  // Chưa có mạch (hoặc vừa ^N) và ô trống → cho chọn lại câu đã hỏi.
+  const showRecent = !items.length && !q.trim() && !busy;
   useInput((ch, key) => {
     if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
     if (key.escape || (key.ctrl && ch === 'b')) return onBack();
     if (key.ctrl && ch === 'n') return setAsk({ items: [] }); // mạch mới
     if (key.tab) return setAsk({ effort: EFFORT_SEQ[(EFFORT_SEQ.indexOf(effort) + 1) % 3] });
-    if (!key.return || busy || !q.trim()) return;
-    const text = q.trim();
+    if (showRecent && rec.recent.length) {
+      if (key.upArrow) return rec.move(-1);
+      if (key.downArrow) return rec.move(1);
+    }
+    if (!key.return || busy) return;
+    const text = (showRecent && rec.sel >= 0 ? rec.recent[rec.sel]?.q : q)?.trim();
+    if (!text) return;
     setBusy(true);
     // Lịch sử theo thứ tự thời gian (items mới nhất ở đầu) để AI bám mạch.
     const history: AskTurn[] = [...items]
@@ -1887,7 +1938,10 @@ function AskView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () =>
       .catch((e) => ({ q: text, error: (e as Error).message }))
       .then((x: AskItem) => {
         setAsk({ items: [x, ...askStore.items].slice(0, 20) });
+        // Lưu lịch sử local: câu hỏi + đầu câu trả lời.
+        if (!x.error && x.answer) rec.save(text, x.answer.split('\n')[0]?.slice(0, 80));
         setQ('');
+        rec.setSel(-1);
         setBusy(false);
       });
   });
@@ -1915,6 +1969,7 @@ function AskView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () =>
       {!items.length && !busy ? (
         <Text color={MUTED}>  Hỏi gì cũng được, hỏi tiếp theo mạch (vd "còn với số nhiều?"). Tab đổi độ chi tiết.</Text>
       ) : null}
+      {showRecent && rec.recent.length ? <RecentList items={rec.recent} sel={rec.sel} /> : null}
       {items.slice(0, 4).map((x, i) => (
         <Box key={`${i}:${x.q}`} flexDirection="column" marginTop={1}>
           <Hang indent={2} mark={<Text color={MUTED}>? </Text>} dim={i > 0} bold={i === 0}>
