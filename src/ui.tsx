@@ -28,6 +28,8 @@ import {
   type Stats,
   type AiStatus,
   type AiProvider,
+  type AskEffort,
+  type AskTurn,
   type Summary,
   type Vocab,
   saveConfig,
@@ -513,6 +515,7 @@ function FeedbackView({
   lean?: boolean;
 }) {
   const right = fb.corrected || sample;
+  const model = useAiStatus()?.model ?? '';
   const alts = lean ? [] : altsOf(fb, sample);
   const preps = lean ? [] : (fb.preps ?? []);
   const style = lean ? '' : (fb.styleNote ?? '');
@@ -578,7 +581,7 @@ function FeedbackView({
       <Hang mark={<Text color={BRAND}>✓ </Text>} bold color={BRAND}>
         {right}
       </Hang>
-      <Box marginLeft={2}>
+      <Box marginLeft={2} flexDirection="column">
         <Text>
           <ScoreDots fb={fb} />
           {'   '}
@@ -586,6 +589,12 @@ function FeedbackView({
           {'   '}
           <Check ok={fb.tenseOk} label={axis} />
         </Text>
+        {/* Token + tiền ước tính cho lần chấm này — mờ nhỏ. */}
+        {fb.cached ? (
+          <Text color={FAINT}>⤷ chấm lại từ cache — không tốn token</Text>
+        ) : fb.usage ? (
+          <Text color={FAINT}>⤷ {costLine(model, fb.usage)}</Text>
+        ) : null}
       </Box>
       {wide ? (
         <Box marginLeft={2} marginTop={1} gap={4}>
@@ -1785,29 +1794,76 @@ function ViEnView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () =
 
 /**
  * ^B — hỏi AI bất kỳ (chủ yếu về tiếng Anh), trả lời NGẮN GỌN. Server giới hạn token + cache câu
- * hỏi nên hỏi lại y hệt không tốn thêm. Giữ 3 câu gần nhất; mỗi dòng trả lời tự xuống dòng gọn.
+ * hỏi nên hỏi lại y hệt không tốn thêm (câu đơn lẻ). Có nhớ ngữ cảnh trong phiên.
+ */
+type AskItem = {
+  q: string;
+  answer?: string;
+  cached?: boolean;
+  model?: string;
+  usage?: { in: number; out: number } | null;
+  error?: string;
+};
+
+const EFFORT_LABEL: Record<AskEffort, string> = { low: 'ngắn', med: 'vừa', high: 'chi tiết' };
+const EFFORT_SEQ: AskEffort[] = ['low', 'med', 'high'];
+
+/**
+ * Phiên hỏi AI — giữ ở module để đóng/mở ^B vẫn NHỚ mạch hội thoại (và mức chi tiết) suốt phiên
+ * chạy. ^N xoá để bắt đầu mạch mới.
+ */
+const askStore: { items: AskItem[]; effort: AskEffort; listeners: Set<() => void> } = {
+  items: [],
+  effort: 'low',
+  listeners: new Set(),
+};
+function setAsk(patch: Partial<Pick<typeof askStore, 'items' | 'effort'>>) {
+  Object.assign(askStore, patch);
+  for (const l of askStore.listeners) l();
+}
+function useAskStore() {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const l = () => force((n) => n + 1);
+    askStore.listeners.add(l);
+    return () => void askStore.listeners.delete(l);
+  }, []);
+  return askStore;
+}
+
+/**
+ * ^B — hỏi AI theo PHIÊN hội thoại (nhớ các lượt trước). Tab đổi mức chi tiết (ngắn/vừa/chi tiết),
+ * ^N xoá mạch. Mỗi câu hiện token + tiền ước tính; câu đơn lẻ (đầu mạch) được cache.
  */
 function AskView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () => void; embedded?: boolean }) {
   const { exit } = useApp();
   const api = useRef(client(cfg)).current;
+  const { items, effort } = useAskStore();
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
-  const [results, setResults] = useState<
-    { q: string; answer?: string; cached?: boolean; model?: string; usage?: { in: number; out: number } | null; error?: string }[]
-  >([]);
   const input = useLineEditor(q, setQ, !busy);
   useInput((ch, key) => {
     if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
     if (key.escape || (key.ctrl && ch === 'b')) return onBack();
+    if (key.ctrl && ch === 'n') return setAsk({ items: [] }); // mạch mới
+    if (key.tab) return setAsk({ effort: EFFORT_SEQ[(EFFORT_SEQ.indexOf(effort) + 1) % 3] });
     if (!key.return || busy || !q.trim()) return;
     const text = q.trim();
     setBusy(true);
+    // Lịch sử theo thứ tự thời gian (items mới nhất ở đầu) để AI bám mạch.
+    const history: AskTurn[] = [...items]
+      .reverse()
+      .filter((x) => x.answer)
+      .flatMap((x) => [
+        { role: 'user' as const, text: x.q },
+        { role: 'assistant' as const, text: x.answer ?? '' },
+      ]);
     api
-      .ask(text)
+      .ask(text, history, effort)
       .then((r) => ({ q: text, answer: r.answer, cached: r.cached, model: r.model, usage: r.usage }))
       .catch((e) => ({ q: text, error: (e as Error).message }))
-      .then((x) => {
-        setResults((p) => [x, ...p.filter((y) => y.q !== text)].slice(0, 3));
+      .then((x: AskItem) => {
+        setAsk({ items: [x, ...askStore.items].slice(0, 20) });
         setQ('');
         setBusy(false);
       });
@@ -1818,7 +1874,10 @@ function AskView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () =>
         <Text color={WARM} bold>
           ▍Hỏi AI
         </Text>
-        <Text color={MUTED}> · trả lời ngắn gọn, tiết kiệm token (cache) · ^B hoặc esc để đóng</Text>
+        <Text color={MUTED}>
+          {' '}
+          · nhớ ngữ cảnh trong phiên · mức: <Text color={WARM}>{EFFORT_LABEL[effort]}</Text> (tab đổi) · ^B/esc đóng
+        </Text>
       </Text>
       <Box borderStyle="round" borderColor={WARM} paddingX={1}>
         <Text color={WARM}>? </Text>
@@ -1830,11 +1889,11 @@ function AskView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () =>
           input
         )}
       </Box>
-      {!results.length && !busy ? (
-        <Text color={MUTED}>  Hỏi gì cũng được (vd "phân biệt make/do", "since vs for") rồi ⏎.</Text>
+      {!items.length && !busy ? (
+        <Text color={MUTED}>  Hỏi gì cũng được, hỏi tiếp theo mạch (vd "còn với số nhiều?"). Tab đổi độ chi tiết.</Text>
       ) : null}
-      {results.map((x, i) => (
-        <Box key={x.q} flexDirection="column" marginTop={1}>
+      {items.slice(0, 4).map((x, i) => (
+        <Box key={`${i}:${x.q}`} flexDirection="column" marginTop={1}>
           <Hang indent={2} mark={<Text color={MUTED}>? </Text>} dim={i > 0} bold={i === 0}>
             {x.q}
           </Hang>
@@ -1867,6 +1926,8 @@ function AskView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () =>
       <Keys
         items={[
           ['⏎', 'hỏi'],
+          ['tab', 'độ chi tiết'],
+          ['^N', 'mạch mới'],
           ['esc', embedded ? 'đóng, về bài' : 'quay lại'],
         ]}
       />
@@ -2573,7 +2634,8 @@ function useTermSize() {
 /** Chiều cao (ước lượng) của khối nhận xét — để biết đoạn có vừa màn hình không. */
 function feedbackRows(fb: Feedback, sample: string, w: number, lean = false): number {
   const right = fb.corrected || sample;
-  const head = rowsOf(right, w - 2) + 2; // câu đúng + dòng điểm + dòng trống
+  // câu đúng + dòng điểm + (dòng token/tiền nếu có) + dòng trống
+  const head = rowsOf(right, w - 2) + 2 + (fb.usage || fb.cached ? 1 : 0);
   const mainRows = (mw: number) => {
     let n = rowsOf(fb.comment, mw);
     if (fb.tenseNote) n += rowsOf(fb.tenseNote, mw);

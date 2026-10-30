@@ -157,8 +157,14 @@ export interface Feedback {
   /** Giới từ trong câu đúng + vì sao — server cũ / kết quả cũ không có. */
   /** pic: hình ảnh liên tưởng để nhớ giới từ (bản chấm cũ không có). */
   preps?: { phrase: string; why: string; pic?: string }[];
+  /** Token AI đã dùng để chấm câu này (ước tính tiền). Null/thiếu nếu khớp mẫu hoặc server cũ. */
+  usage?: { in: number; out: number } | null;
+  /** True khi lấy từ cache — không tốn token lần này. */
+  cached?: boolean;
 }
 export type AiProvider = 'gemini' | 'openai';
+export type AskEffort = 'low' | 'med' | 'high';
+export interface AskTurn { role: 'user' | 'assistant'; text: string; }
 export interface AiStatus {
   provider: AiProvider;
   model: string;
@@ -391,8 +397,11 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
     /** Model AI đang dùng + danh sách gợi ý (hiện ở tiêu đề, đổi bằng phím tắt). */
     aiStatus: () => call<AiStatus>('/ai/status'),
     /** Hỏi AI nhanh — trả lời ngắn gọn, tiết kiệm token, cache câu hỏi. */
-    ask: (q: string) =>
-      call<{ answer: string; cached: boolean; model: string; usage: { in: number; out: number } | null }>('/ask', { q }),
+    ask: (q: string, history?: AskTurn[], effort?: AskEffort) =>
+      call<{ answer: string; cached: boolean; model: string; usage: { in: number; out: number } | null }>(
+        '/ask',
+        { q, history, effort },
+      ),
     /** Đổi provider + model (global trên server). */
     setModel: (model: string, provider?: AiProvider) =>
       call<{ provider: AiProvider; model: string }>('/ai/model', { model, provider }, 'PUT'),
