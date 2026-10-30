@@ -158,6 +158,12 @@ export interface Feedback {
   /** pic: hình ảnh liên tưởng để nhớ giới từ (bản chấm cũ không có). */
   preps?: { phrase: string; why: string; pic?: string }[];
 }
+export interface AiStatus {
+  provider: 'gemini' | 'openai';
+  model: string;
+  models: string[];
+}
+
 export interface Stats {
   cycle: number;
   totalDrills: number;
@@ -296,11 +302,11 @@ export class ApiError extends Error {
 }
 
 export function client(cfg: Config, kind: string = KINDS[0].id) {
-  async function call<T>(path: string, body?: unknown): Promise<T> {
+  async function call<T>(path: string, body?: unknown, method?: 'GET' | 'POST' | 'PUT'): Promise<T> {
     let res: Response;
     try {
       res = await fetch(`${cfg.apiUrl}${path}`, {
-        method: body === undefined ? 'GET' : 'POST',
+        method: method ?? (body === undefined ? 'GET' : 'POST'),
         headers: { 'x-api-key': cfg.apiKey, 'content-type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
@@ -381,6 +387,10 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
     ipa: (words: string[]) => call<{ words: Record<string, IpaEntry> }>('/shadowing/ipa', { words }),
     /** Google dịch Anh → Việt (miễn phí, server cache vĩnh viễn). */
     enVi: (text: string) => call<{ translatedText: string }>('/translate', { text }),
+    /** Model AI đang dùng + danh sách gợi ý (hiện ở tiêu đề, đổi bằng phím tắt). */
+    aiStatus: () => call<AiStatus>('/ai/status'),
+    /** Đổi model cho provider đang dùng (global trên server). */
+    setModel: (model: string) => call<{ provider: string; model: string }>('/ai/model', { model }, 'PUT'),
     /** Từ điển Google Dịch cho 1 từ: loại từ + các nghĩa tiếng Việt (miễn phí, cache). */
     dict: (word: string) => call<{ dict: { pos: string; terms: string[] }[] }>('/translate/dict', { word }),
     history: (filter: 'weak' | 'all', page: number, pageSize: number) =>

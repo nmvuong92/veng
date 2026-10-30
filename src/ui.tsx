@@ -26,6 +26,7 @@ import {
   type Kind,
   linesOf,
   type Stats,
+  type AiStatus,
   type Summary,
   type Vocab,
   saveConfig,
@@ -298,7 +299,97 @@ const Check = ({ ok, label }: { ok: boolean; label: string }) => (
   </Text>
 );
 
+/**
+ * Model AI đang dùng — tải một lần lúc mở, hiện ở tiêu đề, đổi bằng ^Y. Lưu ở module để mọi màn
+ * (menu, luyện tập) đọc chung mà không phải truyền prop; đổi xong thì báo cho các màn vẽ lại.
+ */
+const aiStore: { status: AiStatus | null; listeners: Set<() => void> } = { status: null, listeners: new Set() };
+function setAiStatus(s: AiStatus | null) {
+  aiStore.status = s;
+  for (const l of aiStore.listeners) l();
+}
+function useAiStatus(): AiStatus | null {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const l = () => force((n) => n + 1);
+    aiStore.listeners.add(l);
+    return () => void aiStore.listeners.delete(l);
+  }, []);
+  return aiStore.status;
+}
+/** Tải model một lần cho cả phiên (gọi ở màn gốc). */
+function useLoadAiStatus(api: Client) {
+  useEffect(() => {
+    if (aiStore.status) return;
+    api.aiStatus().then(setAiStatus, () => {});
+  }, [api]);
+}
+
+/** Popup chọn model: ↑↓ chọn, ⏎ đổi, esc đóng. Đổi là áp dụng ngay trên server (global). */
+function ModelView({ api, onBack }: { api: Client; onBack: () => void }) {
+  const { exit } = useApp();
+  const status = useAiStatus();
+  const models = status?.models ?? [];
+  const [sel, setSel] = useState(() => Math.max(0, models.indexOf(status?.model ?? '')));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useInput((ch, key) => {
+    if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
+    if (key.escape || (key.ctrl && ch === 'y')) return onBack();
+    if (busy || !models.length) return;
+    if (key.upArrow) return setSel((i) => (i + models.length - 1) % models.length);
+    if (key.downArrow || key.tab) return setSel((i) => (i + 1) % models.length);
+    if (key.return) {
+      const m = models[sel];
+      if (!m || m === status?.model) return onBack();
+      setBusy(true);
+      api.setModel(m).then(
+        (r) => {
+          setAiStatus(status ? { ...status, model: r.model } : status);
+          onBack();
+        },
+        (e) => {
+          setErr((e as Error).message);
+          setBusy(false);
+        },
+      );
+    }
+  });
+  return (
+    <Box flexDirection="column" paddingX={1}>
+      <Text>
+        <Text color={WARM} bold>
+          ▍Model AI
+        </Text>
+        <Text color={MUTED}> · {status ? `${status.provider} · đang dùng ${status.model}` : 'đang tải…'} · ^Y / esc đóng</Text>
+      </Text>
+      <Box flexDirection="column" marginY={1}>
+        {models.map((m, i) => (
+          <Text key={m}>
+            <Text color={i === sel ? WARM : undefined} bold={i === sel}>
+              {i === sel ? ' ▸ ' : '   '}
+            </Text>
+            <Text color={i === sel ? WARM : undefined} bold={i === sel}>
+              {m}
+            </Text>
+            {m === status?.model ? <Text color={BRAND}>  ● đang dùng</Text> : null}
+          </Text>
+        ))}
+        {!models.length ? <Text color={MUTED}>  (chưa tải được danh sách model)</Text> : null}
+      </Box>
+      {busy ? (
+        <Text color={MUTED}>
+          <Spinner type="dots" /> đang đổi…
+        </Text>
+      ) : null}
+      {err ? <Text color={BAD}>  ✗ {err}</Text> : null}
+      <Keys items={[['↑↓', 'chọn'], ['⏎', 'đổi'], ['esc', 'đóng']]} />
+    </Box>
+  );
+}
+
 function Header({ stats, kind, title }: { stats: Stats | null; kind?: Kind; title?: string }) {
+  const ai = useAiStatus();
   return (
     <Box justifyContent="space-between" marginBottom={1} gap={2}>
       {/* Màn hẹp: bên trái tự cắt "…", số liệu bên phải giữ nguyên — không chồng chữ lên nhau. */}
@@ -306,6 +397,7 @@ function Header({ stats, kind, title }: { stats: Stats | null; kind?: Kind; titl
         <Text wrap="truncate-end">
           <Gradient colors={[BRAND, WARM]}>▍veng</Gradient>
           <Text color={MUTED}> · {title ?? `${kind ? kind.label : 'luyện dịch'} · Việt → Anh, AI chấm`}</Text>
+          {ai ? <Text color={FAINT}> · 🧠 {ai.model} ^Y</Text> : null}
         </Text>
       </Box>
       {stats ? (
@@ -1169,7 +1261,9 @@ export function App({ cfg }: { cfg: Config }) {
   SPELL.on = cfg.spell !== false;
   const [kind, setKind] = useState<Kind | null>(null);
   /** home = màn chào + 2 mục · kinds = chọn loại luyện · ipa = tra phiên âm. */
-  const [screen, setScreen] = useState<'home' | 'kinds' | 'vocab'>('home');
+  const [screen, setScreen] = useState<'home' | 'kinds' | 'vocab' | 'model'>('home');
+  const menuApi = useRef(client(cfg)).current;
+  useLoadAiStatus(menuApi);
   const seenHome = useRef(false);
   const pickHome = useCallback((id: HomeId) => {
     seenHome.current = true;
@@ -1191,6 +1285,7 @@ export function App({ cfg }: { cfg: Config }) {
   useInput(
     (input, key) => {
       if (key.ctrl && (input === 'c' || input === 'd')) return exit();
+      if (key.ctrl && input === 'y') return setScreen('model');
       if (key.escape) return goHome();
       if (key.upArrow) setCur((c) => (c + KINDS.length - 1) % KINDS.length);
       if (key.downArrow || key.tab) setCur((c) => (c + 1) % KINDS.length);
@@ -1210,6 +1305,7 @@ export function App({ cfg }: { cfg: Config }) {
     return <Splash lines={total || null} onPick={pickHome} instant={seenHome.current} />;
   }
   if (screen === 'vocab') return <VocabView cfg={cfg} onBack={goHome} />;
+  if (screen === 'model') return <ModelView api={menuApi} onBack={() => setScreen('kinds')} />;
   if (kind) return <Practice key={kind.id} cfg={cfg} kind={kind} onBack={() => setKind(null)} />;
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -1234,6 +1330,7 @@ export function App({ cfg }: { cfg: Config }) {
           ['↑↓', 'chọn'],
           ['1–9 a–e', 'nhảy tới'],
           ['⏎', 'vào luyện'],
+          ['^Y', 'đổi model'],
           ['esc', 'về màn chào'],
           ['^C', 'thoát'],
         ]}
@@ -2347,7 +2444,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
   const [hint, setHint] = useState(0);
   const [vocab, setVocab] = useState<Vocab | 'loading' | { error: string } | null>(null);
   const [reveal, setReveal] = useState(false);
-  const [view, setView] = useState<'drill' | 'history' | 'lookup' | 'vien' | 'ipa'>('drill');
+  const [view, setView] = useState<'drill' | 'history' | 'lookup' | 'vien' | 'ipa' | 'model'>('drill');
   const [frameIdx, setFrameIdx] = useState(() => Math.max(0, FRAMES.findIndex((f) => f.name === cfg.frame)));
   const frame = FRAMES[frameIdx] ?? FRAMES[0]!;
   /** ^K: bảng phím tắt đầy đủ; mặc định chỉ một dòng gợi ý theo tình huống. */
@@ -2577,6 +2674,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     if (key.ctrl && input === 'g') return setView('vien');
     // ^P: popup tra IPA (không AI, không tốn token). ^I không dùng được: terminal gửi giống Tab.
     if (key.ctrl && input === 'p') return setView('ipa');
+    if (key.ctrl && input === 'y') return setView('model');
     if (key.ctrl && input === 'k') return setShowKeys((v) => !v);
     // ^O: bật / tắt nhắc chính tả (lưu config) — muốn luyện "thật" thì tắt.
     if (key.ctrl && input === 'o') {
@@ -2658,6 +2756,14 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
       return next;
     });
 
+  if (view === 'model') {
+    return (
+      <Box flexDirection="column" paddingX={1}>
+        <Header stats={stats} kind={kind} />
+        <ModelView api={api} onBack={() => setView('drill')} />
+      </Box>
+    );
+  }
   if (view === 'ipa') {
     return (
       <Box flexDirection="column" paddingX={1}>
