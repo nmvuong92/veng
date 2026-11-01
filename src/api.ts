@@ -149,6 +149,8 @@ export interface Feedback {
   corrected: string;
   comment: string;
   tenseNote: string;
+  /** Mẹo/quy tắc ngắn về thì–ngữ pháp–cấu trúc, dễ nhớ (server cũ / cache cũ không có). */
+  lesson?: string;
   styleNote: string;
   fixes: { wrong: string; right: string; why: string }[];
   natural: string[];

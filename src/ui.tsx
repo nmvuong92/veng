@@ -283,19 +283,6 @@ function Hang({
 /** Xanh = đúng cả nghĩa lẫn thì, vàng = đúng nghĩa sai thì, đỏ = sai nghĩa — giống web. */
 const toneOf = (fb: Feedback) => (fb.meaningOk && fb.tenseOk ? BRAND : fb.meaningOk ? WARM : BAD);
 
-function ScoreDots({ fb }: { fb: Feedback }) {
-  const n = Math.max(0, Math.min(10, Math.round(fb.score)));
-  return (
-    <Text>
-      <Text bold color={toneOf(fb)}>
-        {fb.score}/10
-      </Text>{' '}
-      <Text color={toneOf(fb)}>{'●'.repeat(n)}</Text>
-      <Text color={MUTED}>{'○'.repeat(10 - n)}</Text>
-    </Text>
-  );
-}
-
 const Check = ({ ok, label }: { ok: boolean; label: string }) => (
   <Text color={ok ? BRAND : BAD}>
     {label} {ok ? '✓' : '✗'}
@@ -389,6 +376,15 @@ function costLine(model: string, usage: { in: number; out: number }): string {
   if (!p) return toks;
   const cost = (usage.in / 1e6) * p[0] + (usage.out / 1e6) * p[1];
   return `${toks} · ~${usdSmall(cost)} (≈ ${vnd(cost * VND_PER_USD)})`;
+}
+
+/** Siêu gọn cho khối chấm: chỉ tiền VND ước tính một lần chấm. Model lạ (không có giá) → rỗng. */
+function costTiny(model: string, usage: { in: number; out: number }): string {
+  const p = MODEL_PRICE[model];
+  if (!p) return '';
+  const cost = (usage.in / 1e6) * p[0] + (usage.out / 1e6) * p[1];
+  const d = cost * VND_PER_USD;
+  return d < 0.5 ? '~0đ' : `≈ ${vnd(d)}`;
 }
 
 /**
@@ -551,6 +547,11 @@ function FeedbackView({
     <Box flexDirection="column">
       <Text>{fb.comment}</Text>
       {fb.tenseNote ? <Text color={BRAND}>⏱ {fb.tenseNote}</Text> : null}
+      {fb.lesson ? (
+        <Hang color={WARM} mark={<Text color={WARM}>📌 </Text>}>
+          {fb.lesson}
+        </Hang>
+      ) : null}
       {numbered ? (
         <Box marginTop={1}>
           <FixList fixes={numbered} />
@@ -599,25 +600,30 @@ function FeedbackView({
     </Box>
   );
 
+  const tiny = !fb.cached && fb.usage ? costTiny(model, fb.usage) : '';
   return (
     <Box flexDirection="column" marginLeft={3}>
-      <Hang mark={<Text color={BRAND}>✓ </Text>} bold color={BRAND}>
-        {right}
-      </Hang>
+      {/* Câu đúng chiếm phần lớn dòng; điểm nhỏ nép góc phải trên cùng dòng. */}
+      <Box width={width - 4} alignItems="flex-start">
+        <Box flexGrow={1} flexShrink={1}>
+          <Hang mark={<Text color={BRAND}>✓ </Text>} bold color={BRAND}>
+            {right}
+          </Hang>
+        </Box>
+        <Box flexShrink={0} marginLeft={1}>
+          <Text bold color={toneOf(fb)}>
+            {fb.score}/10
+          </Text>
+        </Box>
+      </Box>
       <Box marginLeft={2} flexDirection="column">
         <Text>
-          <ScoreDots fb={fb} />
-          {'   '}
           <Check ok={fb.meaningOk} label="nghĩa" />
           {'   '}
           <Check ok={fb.tenseOk} label={axis} />
+          {/* Token siêu bé, chỉ tiền — nép cuối dòng nhận xét đúng/sai. */}
+          {fb.cached ? <Text color={FAINT}>   · cache</Text> : tiny ? <Text color={FAINT}>   · {tiny}</Text> : null}
         </Text>
-        {/* Token + tiền ước tính cho lần chấm này — mờ nhỏ. */}
-        {fb.cached ? (
-          <Text color={FAINT}>⤷ chấm lại từ cache — không tốn token</Text>
-        ) : fb.usage ? (
-          <Text color={FAINT}>⤷ {costLine(model, fb.usage)}</Text>
-        ) : null}
       </Box>
       {wide ? (
         <Box marginLeft={2} marginTop={1} gap={4}>
