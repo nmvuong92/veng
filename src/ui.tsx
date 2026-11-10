@@ -514,17 +514,40 @@ const altsOf = (fb: Feedback, sample: string) => {
   );
 };
 
+/** IPA cả câu đúng (CMUdict, không tốn token, server cache). Từ lạ thì giữ nguyên chữ. */
+function useSentenceIpa(api: Client, sentence: string): string | null {
+  const [ipa, setIpa] = useState<string | null>(null);
+  useEffect(() => {
+    const toks = tokensOf(sentence);
+    if (!toks.length) {
+      setIpa(null);
+      return;
+    }
+    let alive = true;
+    api
+      .ipa(toks)
+      .then((r) => alive && setIpa(toks.map((w) => r.words[ipaKey(w)]?.ipa ?? w).join(' ')))
+      .catch(() => alive && setIpa(null));
+    return () => {
+      alive = false;
+    };
+  }, [api, sentence]);
+  return ipa;
+}
+
 /**
  * Khối chấm, quan trọng nhất lên trên: câu đúng → điểm → nhận xét + sửa lỗi; phụ (cách nói khác,
  * giới từ, lưu ý vặt) xuống dưới — hoặc sang cột phải khi màn hình rộng.
  */
 function FeedbackView({
+  api,
   fb,
   sample,
   axis,
   lean = false,
   width,
 }: {
+  api: Client;
   fb: Feedback;
   sample: string;
   axis: string;
@@ -534,6 +557,7 @@ function FeedbackView({
   lean?: boolean;
 }) {
   const right = fb.corrected || sample;
+  const sentIpa = useSentenceIpa(api, right);
   const model = useAiStatus()?.model ?? '';
   const alts = lean ? [] : altsOf(fb, sample);
   const preps = lean ? [] : (fb.preps ?? []);
@@ -616,6 +640,11 @@ function FeedbackView({
           </Text>
         </Box>
       </Box>
+      {sentIpa ? (
+        <Box marginLeft={2}>
+          <Text color={MUTED}>/{sentIpa}/</Text>
+        </Box>
+      ) : null}
       <Box marginLeft={2} flexDirection="column">
         <Text>
           <Check ok={fb.meaningOk} label="nghĩa" />
@@ -3338,7 +3367,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       {fb && burst?.i === i ? (
                         <Verdict key={burst.key} fb={fb} streak={streak.current} onEnd={endBurst} />
                       ) : fb ? (
-                        <FeedbackView fb={fb} sample={l.answer} axis={kind.axis} lean={lean} width={W} />
+                        <FeedbackView api={api} fb={fb} sample={l.answer} axis={kind.axis} lean={lean} width={W} />
                       ) : null}
                       {/* Mạch hỏi / ráp câu / be: câu đáp của người kia, như web — hiện khi đã chấm hoặc xem mẫu. */}
                       {l.reply && (fb || reveal) ? (
