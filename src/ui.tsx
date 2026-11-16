@@ -627,12 +627,13 @@ function FeedbackView({
   const tiny = !fb.cached && fb.usage ? costTiny(model, fb.usage) : '';
   return (
     <Box flexDirection="column" marginLeft={3}>
-      {/* Câu đúng chiếm phần lớn dòng; điểm nhỏ nép góc phải trên cùng dòng. */}
-      <Box width={width - 4} alignItems="flex-start">
+      <Hang mark={<Text color={BRAND}>✓ </Text>} bold color={BRAND}>
+        {right}
+      </Hang>
+      {/* IPA cả câu + điểm chung một dòng: IPA bên trái, điểm nhỏ nép phải. */}
+      <Box width={width - 6} marginLeft={2} alignItems="flex-start">
         <Box flexGrow={1} flexShrink={1}>
-          <Hang mark={<Text color={BRAND}>✓ </Text>} bold color={BRAND}>
-            {right}
-          </Hang>
+          {sentIpa ? <Text color={MUTED}>/{sentIpa}/</Text> : null}
         </Box>
         <Box flexShrink={0} marginLeft={1}>
           <Text bold color={toneOf(fb)}>
@@ -640,11 +641,6 @@ function FeedbackView({
           </Text>
         </Box>
       </Box>
-      {sentIpa ? (
-        <Box marginLeft={2}>
-          <Text color={MUTED}>/{sentIpa}/</Text>
-        </Box>
-      ) : null}
       <Box marginLeft={2} flexDirection="column">
         <Text>
           <Check ok={fb.meaningOk} label="nghĩa" />
@@ -1906,6 +1902,22 @@ type AskItem = {
   error?: string;
 };
 
+/** Gói ngữ cảnh câu vừa chấm để hỏi tiếp AI (vd "tại sao rest part sai?") mà không phải gõ lại. */
+function askContext(vi: string, answer: string, fb: Feedback): string {
+  const fixes = fb.fixes
+    ?.map((f) => `"${f.wrong}"→"${f.right}"${f.why ? ` (${f.why})` : ''}`)
+    .join('; ');
+  return [
+    `Đề (tiếng Việt): ${vi}`,
+    `Mình viết: ${answer}`,
+    `Câu đúng: ${fb.corrected || answer}`,
+    fixes ? `Lỗi đã sửa: ${fixes}` : '',
+    fb.tenseNote ? `Ghi chú: ${fb.tenseNote}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 const EFFORT_LABEL: Record<AskEffort, string> = { low: 'ngắn', med: 'vừa', high: 'chi tiết' };
 const EFFORT_SEQ: AskEffort[] = ['low', 'med', 'high'];
 
@@ -1913,12 +1925,20 @@ const EFFORT_SEQ: AskEffort[] = ['low', 'med', 'high'];
  * Phiên hỏi AI — giữ ở module để đóng/mở ^B vẫn NHỚ mạch hội thoại (và mức chi tiết) suốt phiên
  * chạy. ^N xoá để bắt đầu mạch mới.
  */
-const askStore: { items: AskItem[]; effort: AskEffort; listeners: Set<() => void> } = {
+const askStore: {
+  items: AskItem[];
+  effort: AskEffort;
+  /** Ngữ cảnh câu đang hỏi (câu luyện vừa chấm) — gửi kèm mỗi lượt để AI bám sát. */
+  context?: string;
+  /** Nhãn ngắn hiện trên đầu phiên hỏi (vd 'câu 09'). */
+  contextLabel?: string;
+  listeners: Set<() => void>;
+} = {
   items: [],
   effort: 'low',
   listeners: new Set(),
 };
-function setAsk(patch: Partial<Pick<typeof askStore, 'items' | 'effort'>>) {
+function setAsk(patch: Partial<Pick<typeof askStore, 'items' | 'effort' | 'context' | 'contextLabel'>>) {
   Object.assign(askStore, patch);
   for (const l of askStore.listeners) l();
 }
@@ -1939,7 +1959,7 @@ function useAskStore() {
 function AskView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () => void; embedded?: boolean }) {
   const { exit } = useApp();
   const api = useRef(client(cfg)).current;
-  const { items, effort } = useAskStore();
+  const { items, effort, contextLabel } = useAskStore();
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
   const input = useLineEditor(q, setQ, !busy);
@@ -1949,7 +1969,7 @@ function AskView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () =>
   useInput((ch, key) => {
     if (key.ctrl && (ch === 'c' || ch === 'd')) return exit();
     if (key.escape || (key.ctrl && ch === 'b')) return onBack();
-    if (key.ctrl && ch === 'n') return setAsk({ items: [] }); // mạch mới
+    if (key.ctrl && ch === 'n') return setAsk({ items: [], context: undefined, contextLabel: undefined }); // mạch mới
     if (key.tab) return setAsk({ effort: EFFORT_SEQ[(EFFORT_SEQ.indexOf(effort) + 1) % 3] });
     if (showRecent && rec.recent.length) {
       if (key.upArrow) return rec.move(-1);
@@ -1968,7 +1988,7 @@ function AskView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () =>
         { role: 'assistant' as const, text: x.answer ?? '' },
       ]);
     api
-      .ask(text, history, effort)
+      .ask(text, history, effort, askStore.context)
       .then((r) => ({ q: text, answer: r.answer, cached: r.cached, model: r.model, usage: r.usage }))
       .catch((e) => ({ q: text, error: (e as Error).message }))
       .then((x: AskItem) => {
@@ -1988,9 +2008,12 @@ function AskView({ cfg, onBack, embedded = false }: { cfg: Config; onBack: () =>
         </Text>
         <Text color={MUTED}>
           {' '}
-          · nhớ ngữ cảnh trong phiên · mức: <Text color={WARM}>{EFFORT_LABEL[effort]}</Text> (tab đổi) · ^B/esc đóng
+          · nhớ ngữ cảnh trong phiên · mức: <Text color={WARM}>{EFFORT_LABEL[effort]}</Text> (tab đổi) · ^N mạch mới · ^B/esc đóng
         </Text>
       </Text>
+      {contextLabel ? (
+        <Text color={BRAND}>  📝 đang hỏi về {contextLabel} — AI đã biết câu đề, câu bạn viết và lỗi.</Text>
+      ) : null}
       <Box borderStyle="round" borderColor={WARM} paddingX={1}>
         <Text color={WARM}>? </Text>
         {busy ? (
@@ -3018,7 +3041,17 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     // ^P: popup tra IPA (không AI, không tốn token). ^I không dùng được: terminal gửi giống Tab.
     if (key.ctrl && input === 'p') return setView('ipa');
     if (key.ctrl && input === 'y') return setView('model');
-    if (key.ctrl && input === 'b') return setView('ask');
+    // ^B: hỏi AI. Đang xem câu đã chấm thì seed ngữ cảnh câu đó (mạch mới) để hỏi tiếp luôn.
+    if (key.ctrl && input === 'b') {
+      const fb = feedbacks[cur];
+      const label = fb ? `câu ${String(cur + 1).padStart(2, '0')}` : undefined;
+      // Mở lại cùng câu thì giữ nguyên mạch đang hỏi; câu khác (hoặc chưa từng seed) thì mạch mới.
+      if (fb && askStore.contextLabel !== label) {
+        const ans = gradedAs[cur] || answers[cur] || '';
+        setAsk({ items: [], context: askContext(steps[cur]?.vi ?? '', ans, fb), contextLabel: label });
+      }
+      return setView('ask');
+    }
     if (key.ctrl && input === 'k') return setShowKeys((v) => !v);
     // ^O: bật / tắt nhắc chính tả (lưu config) — muốn luyện "thật" thì tắt.
     if (key.ctrl && input === 'o') {

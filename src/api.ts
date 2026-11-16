@@ -401,10 +401,10 @@ export function client(cfg: Config, kind: string = KINDS[0].id) {
     /** Model AI đang dùng + danh sách gợi ý (hiện ở tiêu đề, đổi bằng phím tắt). */
     aiStatus: () => call<AiStatus>('/ai/status'),
     /** Hỏi AI nhanh — trả lời ngắn gọn, tiết kiệm token, cache câu hỏi. */
-    ask: (q: string, history?: AskTurn[], effort?: AskEffort) =>
+    ask: (q: string, history?: AskTurn[], effort?: AskEffort, context?: string) =>
       call<{ answer: string; cached: boolean; model: string; usage: { in: number; out: number } | null }>(
         '/ask',
-        { q, history, effort },
+        { q, history, effort, context },
       ),
     /** Đổi provider + model (global trên server). */
     setModel: (model: string, provider?: AiProvider) =>
