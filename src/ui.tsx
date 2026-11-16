@@ -2,6 +2,7 @@ import { Box, type DOMElement, Text, Transform, useApp, useCursor, useInput, use
 import Gradient from 'ink-gradient';
 import Spinner from 'ink-spinner';
 import stringWidth from 'string-width';
+import wrapAnsi from 'wrap-ansi';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
   type Client,
@@ -55,6 +56,31 @@ const FRAMES = [
 const FAINT = '#4a5260';
 
 /** Ô nhập một dòng, phím kiểu readline. Tự viết vì ink-text-input nuốt Ctrl+chữ thành ký tự. */
+/**
+ * (dòng, cột) hiển thị của con trỏ ở chỉ số `cur` — khớp ĐÚNG cách Ink ngắt dòng: wrap-ansi theo
+ * TỪ (trim:false, hard:true), y như ink/wrap-text. Chỉ chèn '\n', không bỏ ký tự nào, nên duyệt
+ * chuỗi đã ngắt là map được từng ký tự nguồn sang (dòng, cột). `text` không chứa '\n' (editor đổi
+ * xuống dòng thành dấu cách). Tính theo từ để không lệch như chia col/width (char-wrap).
+ */
+function cursorRowCol(text: string, cur: number, width: number): { row: number; col: number } {
+  if (width < 1) return { row: 0, col: 0 };
+  const wrapped = wrapAnsi(text, width, { trim: false, hard: true });
+  let s = 0;
+  let row = 0;
+  let col = 0;
+  for (const ch of wrapped) {
+    if (s >= cur) break;
+    if (ch === '\n') {
+      row++;
+      col = 0;
+    } else {
+      s += ch.length;
+      col += stringWidth(ch);
+    }
+  }
+  return { row, col };
+}
+
 function useLineEditor(value: string, onChange: (v: string) => void, active: boolean, mask = false) {
   const [cur, setCur] = useState(value.length);
   // Chữ + vị trí con trỏ "thật" nằm trong ref, cập nhật NGAY: Ink có thể gọi handler nhiều lần
@@ -146,11 +172,9 @@ function useLineEditor(value: string, onChange: (v: string) => void, active: boo
       y += node.yogaNode.getComputedTop();
       node = node.parentNode;
     }
-    // ponytail: xuống dòng tính theo ký tự (Ink ngắt theo từ) — câu dài lệch tối đa vài ô ở dòng sau.
-    const col = stringWidth(shown.slice(0, cur));
-    // Ô nhập rộng đúng bằng chữ → con trỏ ngay sau ký tự cuối (col = width) vẫn CÙNG dòng.
-    const line = Math.floor(Math.max(0, col - 1) / width);
-    setCursorPosition({ x: x + col - line * width, y: y + line });
+    // Ngắt dòng theo TỪ đúng như Ink → con trỏ ở dòng wrap không còn lệch sang phải.
+    const { row, col } = cursorRowCol(shown, cur, width);
+    setCursorPosition({ x: x + col, y: y + row });
   }
   // Lần vẽ đầu chưa có layout → vẽ lại một lần cho con trỏ vào đúng chỗ.
   const [, bump] = useState(0);
