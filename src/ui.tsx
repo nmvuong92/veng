@@ -901,6 +901,21 @@ function GradedLines({
   );
 }
 
+/** Câu đáp của "người kia" trong mạch hội thoại: câu tiếng Anh + IPA + nghĩa tiếng Việt. */
+function ReplyBlock({ api, reply, replyVi }: { api: Client; reply: string; replyVi?: string }) {
+  const ipa = useSentenceIpa(api, reply);
+  return (
+    <Box flexDirection="column" marginLeft={3} marginTop={1}>
+      <Text>
+        <Text color={MUTED}>↩ người kia đáp </Text>
+        {reply}
+      </Text>
+      {ipa ? <Text color={MUTED}>{`                /${ipa}/`}</Text> : null}
+      {replyVi ? <Text color={MUTED}>{`                ${replyVi}`}</Text> : null}
+    </Box>
+  );
+}
+
 function VocabHint({ vocab, index }: { vocab: Vocab | 'loading' | { error: string } | null; index: number }) {
   if (vocab === 'loading' || vocab === null)
     return (
@@ -3290,7 +3305,9 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
     if (hint) n += rowsOf(`${l.hint} · ${l.patterns?.join(' · ')}`, W - 7) + (hint === 2 ? 6 : 0);
     if (reveal && !fb) n += rowsOf(l.answer, W - 11);
     if (fb) n += burst?.i === i ? 6 : feedbackRows(fb, l.answer, W - 6, lean);
-    if (l.reply && (fb || reveal)) n += 1 + rowsOf(l.reply, W - 20) + (l.replyVi ? rowsOf(l.replyVi, W - 20) : 0);
+    // +rowsOf(reply) thứ hai: ước lượng dòng IPA (dài xấp xỉ câu đáp).
+    if (l.reply && (fb || reveal))
+      n += 1 + 2 * rowsOf(l.reply, W - 20) + (l.replyVi ? rowsOf(l.replyVi, W - 20) : 0);
     return n;
   };
   const chrome =
@@ -3447,13 +3464,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       ) : null}
                       {/* Mạch hỏi / ráp câu / be: câu đáp của người kia, như web — hiện khi đã chấm hoặc xem mẫu. */}
                       {l.reply && (fb || reveal) ? (
-                        <Box flexDirection="column" marginLeft={3} marginTop={1}>
-                          <Text>
-                            <Text color={MUTED}>↩ người kia đáp </Text>
-                            {l.reply}
-                          </Text>
-                          {l.replyVi ? <Text color={MUTED}>{`                ${l.replyVi}`}</Text> : null}
-                        </Box>
+                        <ReplyBlock api={api} reply={l.reply} replyVi={l.replyVi} />
                       ) : null}
                     </>
                   ) : fb ? (
