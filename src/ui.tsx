@@ -927,10 +927,10 @@ function GradedLines({
 }
 
 /** Câu đáp của "người kia" trong mạch hội thoại: câu tiếng Anh + IPA + nghĩa tiếng Việt. */
-function ReplyBlock({ api, reply, replyVi }: { api: Client; reply: string; replyVi?: string }) {
+function ReplyBlock({ api, reply, replyVi, flush = false }: { api: Client; reply: string; replyVi?: string; flush?: boolean }) {
   const ipa = useSentenceIpa(api, reply);
   return (
-    <Box flexDirection="column" marginLeft={3} marginTop={1}>
+    <Box flexDirection="column" marginLeft={3} marginTop={flush ? 0 : 1}>
       <Text>
         <Text color={MUTED}>↩ người kia đáp </Text>
         {reply}
@@ -3404,6 +3404,90 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
               const fb = feedbacks[i];
               const active = i === cur;
               const mark = fb ? (fb.meaningOk && fb.tenseOk ? '✓' : '✗') : active ? '▸' : '·';
+              // Màn đủ rộng → "người kia đáp" sang cột phải ngang hàng câu hỏi; hẹp thì xếp dọc như cũ.
+              const hasReply = !!(l.reply && (fb || reveal));
+              const wideReply = active && hasReply && W >= 140;
+              const replyW = Math.min(64, Math.floor(W * 0.38));
+              const bodyW = wideReply ? W - replyW - 3 : W;
+              const replyEl =
+                l.reply && (fb || reveal) ? (
+                  <ReplyBlock api={api} reply={l.reply} replyVi={l.replyVi} flush={wideReply} />
+                ) : null;
+              const questionEl = (
+                <Hang
+                  dim={!active}
+                  bold={active}
+                  mark={
+                    <Text>
+                      {pending[i] ? (
+                        <Text color={WARM}>
+                          <Spinner type="dots" />{' '}
+                        </Text>
+                      ) : (
+                        <Text color={fb ? toneOf(fb) : active ? frame.color : MUTED}>{mark} </Text>
+                      )}
+                      <Text color={MUTED}>{String(i + 1).padStart(2, '0')} </Text>
+                    </Text>
+                  }
+                >
+                  {l.vi}
+                  {!active && fb ? <Text color={toneOf(fb)}> {fb.score}/10</Text> : null}
+                  {pending[i] && !active ? <Text color={MUTED}> · đang chấm…</Text> : null}
+                </Hang>
+              );
+              const activeEl = (
+                <>
+                  {fb ? (
+                    // Đã chấm: chỉ đọc, không con trỏ — hiện luôn câu AI đã đánh dấu lỗi.
+                    <AnsweredLine fb={fb} answer={gradedAs[i] || answers[i] || ''} width={bodyW} color={frame.color} />
+                  ) : busy || pending[i] ? (
+                    <Hang indent={3} color={MUTED} mark={<Text color={frame.color}>› </Text>}>
+                      {answers[i]}
+                    </Hang>
+                  ) : (
+                    <Box marginLeft={3}>
+                      <Box flexShrink={0}>
+                        <Text color={frame.color}>› </Text>
+                      </Box>
+                      <AnswerInput
+                        value={answers[i] ?? ''}
+                        onChange={setAnswer}
+                        wide={term.cols >= 90}
+                        api={api}
+                        sample={l.answer}
+                        allow={allowSpell}
+                        left={SPELL_BUDGET - spellUsed.current.size}
+                      />
+                    </Box>
+                  )}
+                  {pending[i] ? (
+                    <Box marginLeft={5}>
+                      <Text color={BRAND}>
+                        <Spinner type="dots" /> AI đang chấm câu này…
+                      </Text>
+                    </Box>
+                  ) : null}
+                  {hint ? (
+                    <Box flexDirection="column" marginLeft={3}>
+                      <Hang mark={<Text>💡 </Text>} color={WARM}>
+                        {l.hint}
+                        {l.patterns?.length ? <Text color={MUTED}> · {l.patterns.join(' · ')}</Text> : null}
+                      </Hang>
+                      {hint === 2 ? <VocabHint vocab={vocab} index={i} /> : null}
+                    </Box>
+                  ) : null}
+                  {reveal && !fb ? (
+                    <Hang indent={3} color={BRAND} mark={<Text color={MUTED}>◆ mẫu </Text>}>
+                      {l.answer}
+                    </Hang>
+                  ) : null}
+                  {fb && burst?.i === i ? (
+                    <Verdict key={burst.key} fb={fb} streak={streak.current} onEnd={endBurst} />
+                  ) : fb ? (
+                    <FeedbackView api={api} fb={fb} sample={l.answer} axis={kind.axis} lean={lean} width={bodyW} />
+                  ) : null}
+                </>
+              );
               return (
                 // Câu đang làm: khung bo tròn sáng; câu khác: không viền, chữ faint, lùi 2 cột cho thẳng hàng.
                 // key đổi theo active: Ink không trả bề dày viền về 0 khi borderBottom true → false
@@ -3416,94 +3500,38 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                   paddingLeft={active ? 1 : 2}
                   paddingRight={active ? 1 : 0}
                 >
-                  <Hang
-                    dim={!active}
-                    bold={active}
-                    mark={
-                      <Text>
-                        {pending[i] ? (
-                          <Text color={WARM}>
-                            <Spinner type="dots" />{' '}
-                          </Text>
-                        ) : (
-                          <Text color={fb ? toneOf(fb) : active ? frame.color : MUTED}>{mark} </Text>
-                        )}
-                        <Text color={MUTED}>{String(i + 1).padStart(2, '0')} </Text>
-                      </Text>
-                    }
-                  >
-                    {l.vi}
-                    {!active && fb ? <Text color={toneOf(fb)}> {fb.score}/10</Text> : null}
-                    {pending[i] && !active ? <Text color={MUTED}> · đang chấm…</Text> : null}
-                  </Hang>
-                  {active ? (
+                  {wideReply ? (
+                    <Box flexDirection="row" gap={3}>
+                      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+                        {questionEl}
+                        {activeEl}
+                      </Box>
+                      <Box flexShrink={0} width={replyW}>
+                        {replyEl}
+                      </Box>
+                    </Box>
+                  ) : (
                     <>
-                      {fb ? (
-                        // Đã chấm: chỉ đọc, không con trỏ — hiện luôn câu AI đã đánh dấu lỗi.
-                        <AnsweredLine fb={fb} answer={gradedAs[i] || answers[i] || ''} width={W} color={frame.color} />
-                      ) : busy || pending[i] ? (
-                        <Hang indent={3} color={MUTED} mark={<Text color={frame.color}>› </Text>}>
+                      {questionEl}
+                      {active ? (
+                        <>
+                          {activeEl}
+                          {replyEl}
+                        </>
+                      ) : fb ? (
+                        <>
+                          {burst?.i === i ? (
+                            <Verdict key={burst.key} compact fb={fb} streak={streak.current} onEnd={endBurst} />
+                          ) : null}
+                          <GradedLines api={api} dim width={W} answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
+                        </>
+                      ) : answers[i] ? (
+                        <Hang indent={3} dim color={MUTED} mark={<Text color={MUTED}>› </Text>}>
                           {answers[i]}
                         </Hang>
-                      ) : (
-                        <Box marginLeft={3}>
-                          <Box flexShrink={0}>
-                            <Text color={frame.color}>› </Text>
-                          </Box>
-                          <AnswerInput
-                            value={answers[i] ?? ''}
-                            onChange={setAnswer}
-                            wide={term.cols >= 90}
-                            api={api}
-                            sample={l.answer}
-                            allow={allowSpell}
-                            left={SPELL_BUDGET - spellUsed.current.size}
-                          />
-                        </Box>
-                      )}
-                      {pending[i] ? (
-                        <Box marginLeft={5}>
-                          <Text color={BRAND}>
-                            <Spinner type="dots" /> AI đang chấm câu này…
-                          </Text>
-                        </Box>
-                      ) : null}
-                      {hint ? (
-                        <Box flexDirection="column" marginLeft={3}>
-                          <Hang mark={<Text>💡 </Text>} color={WARM}>
-                            {l.hint}
-                            {l.patterns?.length ? <Text color={MUTED}> · {l.patterns.join(' · ')}</Text> : null}
-                          </Hang>
-                          {hint === 2 ? <VocabHint vocab={vocab} index={i} /> : null}
-                        </Box>
-                      ) : null}
-                      {reveal && !fb ? (
-                        <Hang indent={3} color={BRAND} mark={<Text color={MUTED}>◆ mẫu </Text>}>
-                          {l.answer}
-                        </Hang>
-                      ) : null}
-                      {fb && burst?.i === i ? (
-                        <Verdict key={burst.key} fb={fb} streak={streak.current} onEnd={endBurst} />
-                      ) : fb ? (
-                        <FeedbackView api={api} fb={fb} sample={l.answer} axis={kind.axis} lean={lean} width={W} />
-                      ) : null}
-                      {/* Mạch hỏi / ráp câu / be: câu đáp của người kia, như web — hiện khi đã chấm hoặc xem mẫu. */}
-                      {l.reply && (fb || reveal) ? (
-                        <ReplyBlock api={api} reply={l.reply} replyVi={l.replyVi} />
                       ) : null}
                     </>
-                  ) : fb ? (
-                    <>
-                      {burst?.i === i ? (
-                        <Verdict key={burst.key} compact fb={fb} streak={streak.current} onEnd={endBurst} />
-                      ) : null}
-                      <GradedLines api={api} dim width={W} answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
-                    </>
-                  ) : answers[i] ? (
-                    <Hang indent={3} dim color={MUTED} mark={<Text color={MUTED}>› </Text>}>
-                      {answers[i]}
-                    </Hang>
-                  ) : null}
+                  )}
                 </Box>
               );
             })}
