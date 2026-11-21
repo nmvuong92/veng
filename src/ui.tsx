@@ -591,15 +591,11 @@ function FeedbackView({
   const hasSide = alts.length > 0 || preps.length > 0 || !!style;
   const wide = width >= TWO_COL && hasSide;
 
+  // Mạch dạy: kết luận (động viên) → chỗ sai cụ thể → mẹo nhớ để CUỐI (điều đọng lại).
   const main = (
     <Box flexDirection="column">
       <Text>{fb.comment}</Text>
       {fb.tenseNote ? <Text color={BRAND}>⏱ {fb.tenseNote}</Text> : null}
-      {fb.lesson ? (
-        <Hang color={WARM} mark={<Text color={WARM}>📌 </Text>}>
-          {fb.lesson}
-        </Hang>
-      ) : null}
       {numbered ? (
         <Box marginTop={1}>
           <FixList fixes={numbered} />
@@ -616,6 +612,13 @@ function FeedbackView({
               {f.why ? <Text color={MUTED}> · {f.why}</Text> : null}
             </Text>
           ))}
+        </Box>
+      ) : null}
+      {fb.lesson ? (
+        <Box marginTop={1}>
+          <Hang color={WARM} mark={<Text color={WARM}>📌 </Text>}>
+            {fb.lesson}
+          </Hang>
         </Box>
       ) : null}
     </Box>
