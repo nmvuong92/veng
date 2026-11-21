@@ -538,19 +538,44 @@ const altsOf = (fb: Feedback, sample: string) => {
   );
 };
 
-/** IPA cả câu đúng (CMUdict, không tốn token, server cache). Từ lạ thì giữ nguyên chữ. */
+const NUM_ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const NUM_TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+/** Số nguyên → các từ tiếng Anh để tra IPA (vd 10→[ten], 21→[twenty, one]). Quá lớn thì để nguyên chữ số. */
+function numWords(n: number): string[] {
+  if (!Number.isInteger(n) || n < 0 || n >= 1_000_000) return [String(n)];
+  if (n < 20) return [NUM_ONES[n]!];
+  if (n < 100) {
+    const o = n % 10;
+    return o ? [NUM_TENS[Math.floor(n / 10)]!, NUM_ONES[o]!] : [NUM_TENS[Math.floor(n / 10)]!];
+  }
+  if (n < 1000) {
+    const r = n % 100;
+    return [NUM_ONES[Math.floor(n / 100)]!, 'hundred', ...(r ? numWords(r) : [])];
+  }
+  const r = n % 1000;
+  return [...numWords(Math.floor(n / 1000)), 'thousand', ...(r ? numWords(r) : [])];
+}
+
+/** IPA cả câu (CMUdict, không tốn token, server cache). Số đọc thành chữ (10→ten); từ lạ giữ nguyên. */
 function useSentenceIpa(api: Client, sentence: string): string | null {
   const [ipa, setIpa] = useState<string | null>(null);
   useEffect(() => {
-    const toks = tokensOf(sentence);
-    if (!toks.length) {
+    // Giữ cả chữ lẫn số theo thứ tự; mỗi token → danh sách từ cần tra (số nở thành chữ).
+    const toks = (sentence.match(/[A-Za-z][A-Za-z'-]*|\d+/g) ?? []).slice(0, 30);
+    const expanded = toks.map((t) => (/^\d+$/.test(t) ? numWords(Number(t)) : [t]));
+    const words = expanded.flat();
+    if (!words.length) {
       setIpa(null);
       return;
     }
     let alive = true;
     api
-      .ipa(toks)
-      .then((r) => alive && setIpa(toks.map((w) => r.words[ipaKey(w)]?.ipa ?? w).join(' ')))
+      .ipa(words)
+      .then((r) => {
+        if (!alive) return;
+        const ipaOf = (w: string) => r.words[ipaKey(w)]?.ipa ?? w;
+        setIpa(expanded.map((ws) => ws.map(ipaOf).join(' ')).join(' '));
+      })
       .catch(() => alive && setIpa(null));
     return () => {
       alive = false;
