@@ -832,13 +832,18 @@ const shownAnswer = (fb: Feedback | null | undefined, answer: string) =>
 /** Câu đã chấm (đang mở): bản AI đánh dấu nếu có, không thì câu đã viết — chỉ đọc. */
 function AnsweredLine({ fb, answer, width, color }: { fb: Feedback; answer: string; width: number; color: string }) {
   const marked = fb.marked ? parseCritic(fb.marked) : null;
-  const mark = <Text color={color}>› </Text>;
+  // Có lỗi được đánh dấu → 2 dòng: câu gốc mình gõ (mờ) + dòng đánh dấu chỗ sửa. (Dòng câu đúng ở FeedbackView.)
   return marked?.fixes.length ? (
-    <Box marginLeft={3}>
-      <MarkedAnswer segs={marked.segs} width={width - 5} mark={mark} />
+    <Box flexDirection="column">
+      <Hang indent={3} dim mark={<Text color={MUTED}>› </Text>}>
+        {answer}
+      </Hang>
+      <Box marginLeft={3}>
+        <MarkedAnswer segs={marked.segs} width={width - 5} mark={<Text color={color}>✎ </Text>} />
+      </Box>
     </Box>
   ) : (
-    <Hang indent={3} mark={mark}>
+    <Hang indent={3} mark={<Text color={color}>› </Text>}>
       {answer}
     </Hang>
   );
