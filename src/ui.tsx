@@ -926,17 +926,24 @@ function GradedLines({
   );
 }
 
-/** Câu đáp của "người kia" trong mạch hội thoại: câu tiếng Anh + IPA + nghĩa tiếng Việt. */
+/** Câu đáp của "người kia" trong mạch hội thoại: câu tiếng Anh + IPA + nghĩa tiếng Việt (dấu ↩). */
 function ReplyBlock({ api, reply, replyVi, flush = false }: { api: Client; reply: string; replyVi?: string; flush?: boolean }) {
   const ipa = useSentenceIpa(api, reply);
   return (
     <Box flexDirection="column" marginLeft={3} marginTop={flush ? 0 : 1}>
-      <Text>
-        <Text color={MUTED}>↩ người kia đáp </Text>
+      <Hang indent={2} mark={<Text color={MUTED}>↩ </Text>}>
         {reply}
-      </Text>
-      {ipa ? <Text color={MUTED}>{`                /${ipa}/`}</Text> : null}
-      {replyVi ? <Text color={MUTED}>{`                ${replyVi}`}</Text> : null}
+      </Hang>
+      {ipa ? (
+        <Box marginLeft={2}>
+          <Text color={MUTED}>/{ipa}/</Text>
+        </Box>
+      ) : null}
+      {replyVi ? (
+        <Box marginLeft={2}>
+          <Text color={MUTED}>{replyVi}</Text>
+        </Box>
+      ) : null}
     </Box>
   );
 }
@@ -3407,8 +3414,9 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
               // Màn đủ rộng → "người kia đáp" sang cột phải ngang hàng câu hỏi; hẹp thì xếp dọc như cũ.
               const hasReply = !!(l.reply && (fb || reveal));
               const wideReply = active && hasReply && W >= 140;
-              const replyW = Math.min(64, Math.floor(W * 0.38));
-              const bodyW = wideReply ? W - replyW - 3 : W;
+              // Hai cột cân đối: hỏi/chấm ~52%, câu đáp ~44%, chừa gap 4.
+              const replyW = Math.floor(W * 0.44);
+              const bodyW = wideReply ? W - replyW - 4 : W;
               const replyEl =
                 l.reply && (fb || reveal) ? (
                   <ReplyBlock api={api} reply={l.reply} replyVi={l.replyVi} flush={wideReply} />
@@ -3501,8 +3509,8 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                   paddingRight={active ? 1 : 0}
                 >
                   {wideReply ? (
-                    <Box flexDirection="row" gap={3}>
-                      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+                    <Box flexDirection="row" gap={4}>
+                      <Box flexDirection="column" flexShrink={0} width={bodyW}>
                         {questionEl}
                         {activeEl}
                       </Box>
