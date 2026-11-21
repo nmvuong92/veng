@@ -853,12 +853,14 @@ function AnsweredLine({ fb, answer, width, color }: { fb: Feedback; answer: stri
 }
 
 function GradedLines({
+  api,
   answer,
   fb,
   sample,
   dim = false,
   width,
 }: {
+  api: Client;
   answer: string;
   fb: Feedback;
   sample: string;
@@ -868,6 +870,8 @@ function GradedLines({
   const ok = fb.meaningOk && fb.tenseOk;
   const right = fb.corrected || sample;
   const perfect = ok && norm(right) === norm(answer);
+  // IPA câu đúng (chỉ khi có dòng →); câu đúng sẵn thì bỏ qua, khỏi fetch.
+  const sentIpa = useSentenceIpa(api, perfect ? '' : right);
   const marked = fb.marked ? parseCritic(fb.marked) : null;
   const mark = <Text color={toneOf(fb)}>{ok ? '✓ ' : '✗ '}</Text>;
   return (
@@ -886,6 +890,13 @@ function GradedLines({
           {right}
         </Hang>
       )}
+      {!perfect && sentIpa ? (
+        <Box marginLeft={5}>
+          <Text color={MUTED} dimColor={dim}>
+            /{sentIpa}/
+          </Text>
+        </Box>
+      ) : null}
     </>
   );
 }
@@ -3450,7 +3461,7 @@ function Practice({ cfg, kind, onBack }: { cfg: Config; kind: Kind; onBack: () =
                       {burst?.i === i ? (
                         <Verdict key={burst.key} compact fb={fb} streak={streak.current} onEnd={endBurst} />
                       ) : null}
-                      <GradedLines dim width={W} answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
+                      <GradedLines api={api} dim width={W} answer={gradedAs[i] || answers[i] || ''} fb={fb} sample={l.answer} />
                     </>
                   ) : answers[i] ? (
                     <Hang indent={3} dim color={MUTED} mark={<Text color={MUTED}>› </Text>}>
